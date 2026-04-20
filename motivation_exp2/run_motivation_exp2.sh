@@ -4,6 +4,7 @@ set -euo pipefail
 
 nickname=""
 project_dir="/home/lijinming/tebis"
+basic_script_dir="${project_dir}/ycsb_log/scripts"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 backup_method="elect"
@@ -66,45 +67,17 @@ mkdir -p "${client_logs_dir}"
 throughput_file="${results_dir}/throughput.tsv"
 printf "workload\tbackup_method\tgc_method\tthroughput_kops\tops_file\n" > "${throughput_file}"
 
-filter_ops_file() {
-	local ops_file=$1
-	local tmp_file
-
-	if [[ ! -f "${ops_file}" ]]; then
-		echo "Skip filtering, file not found: ${ops_file}" >&2
-		return
-	fi
-
-	tmp_file=$(mktemp)
-	awk -v lower_threshold="${ops_lower_threshold}" -v higher_threshold="${ops_higher_threshold}" '
-	{
-		num_count = 0
-		second_num = -1
-		for (i = 1; i <= NF; i++) {
-			if ($i ~ /^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) {
-				num_count++
-				if (num_count == 2) {
-					second_num = $i + 0
-					break
-				}
-			}
-		}
-		if (second_num > lower_threshold && second_num <= higher_threshold) {
-			print
-		}
-	}
-	' "${ops_file}" > "${tmp_file}"
-	mv "${tmp_file}" "${ops_file}"
-}
-
 compute_kops_from_ops_file() {
 	local ops_file=$1
 
-	awk '
+	awk -v lower_threshold="${ops_lower_threshold}" -v higher_threshold="${ops_higher_threshold}" '
 	{
 		if (match($0, /([0-9]+)[[:space:]]+sec[[:space:]]+([0-9.eE+-]+)[[:space:]]+operations/, m)) {
 			sec = m[1] + 0
 			operations = m[2] + 0
+			if (!(operations > lower_threshold && operations <= higher_threshold)) {
+				next
+			}
 			if (!seen) {
 				first_sec = sec
 				first_operations = operations
@@ -141,13 +114,12 @@ for workload in "${workloads[@]}"; do
 
 		echo "Running workload=${workload}, backup=${backup_method}, gc=${gc_method}" >&2
 
-		"${project_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
+		"${basic_script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
 			-r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
 			-d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" \
 			-s "${server_log_path}"
 
 		ops_file="${output_path}/run_${workload}/ops.txt"
-		filter_ops_file "${ops_file}"
 
 		kops=$(compute_kops_from_ops_file "${ops_file}") || {
 			echo "Failed to compute throughput from ${ops_file}" >&2
@@ -186,7 +158,7 @@ for workload in "${workloads[@]}"; do
 	plot_output="${results_dir}/run_${workload}_throughput_${backup_method}_gc_${plot_label1}_vs_${plot_label2}.pdf"
 	echo "Plotting throughput curve for workload=${workload} (${plot_label1} vs ${plot_label2})"
 	plot_cmd=(
-		python3 "${project_dir}/plot_ops_triple.py"
+		python3 "${basic_script_dir}/plot_ops_triple.py"
 		--label1 "gc=${plot_label1}"
 		--label2 "gc=${plot_label2}"
 		--window 5

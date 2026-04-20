@@ -81,45 +81,17 @@ resolve_backup_config() {
 	esac
 }
 
-filter_ops_file() {
-	local ops_file=$1
-	local tmp_file
-
-	if [[ ! -f "${ops_file}" ]]; then
-		echo "Skip filtering, file not found: ${ops_file}" >&2
-		return
-	fi
-
-	tmp_file=$(mktemp)
-	awk -v lower_threshold="${ops_lower_threshold}" -v higher_threshold="${ops_higher_threshold}" '
-	{
-		num_count = 0
-		second_num = -1
-		for (i = 1; i <= NF; i++) {
-			if ($i ~ /^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) {
-				num_count++
-				if (num_count == 2) {
-					second_num = $i + 0
-					break
-				}
-			}
-		}
-		if (second_num > lower_threshold && second_num <= higher_threshold) {
-			print
-		}
-	}
-	' "${ops_file}" > "${tmp_file}"
-	mv "${tmp_file}" "${ops_file}"
-}
-
 compute_kops_from_ops_file() {
 	local ops_file=$1
 
-	awk '
+	awk -v lower_threshold="${ops_lower_threshold}" -v higher_threshold="${ops_higher_threshold}" '
 	{
 		if (match($0, /([0-9]+)[[:space:]]+sec[[:space:]]+([0-9.eE+-]+)[[:space:]]+operations/, m)) {
 			sec = m[1] + 0
 			operations = m[2] + 0
+			if (!(operations > lower_threshold && operations <= higher_threshold)) {
+				next
+			}
 			if (!seen) {
 				first_sec = sec
 				first_operations = operations
@@ -168,7 +140,6 @@ for workload in "${workloads[@]}"; do
 		"${run_cmd[@]}"
 
 		ops_file="${output_path}/run_${workload}/ops.txt"
-		filter_ops_file "${ops_file}"
 
 		kops=$(compute_kops_from_ops_file "${ops_file}") || {
 			echo "Failed to compute throughput from ${ops_file}" >&2
