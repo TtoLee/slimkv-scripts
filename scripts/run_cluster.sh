@@ -188,7 +188,7 @@ start_servers() {
 
     echo "Starting tebis servers on hosts: ${HOSTS[*]}"
     for host in "${HOSTS[@]}"; do
-        scp -q "${TEBIS_DIR}/scripts/remote_start_tebis_with_cgroup.sh" "${host}:${remote_cgroup_launcher}" || {
+        scp -q "${TEBIS_DIR}/ycsb_log/scripts/remote_start_tebis_with_cgroup.sh" "${host}:${remote_cgroup_launcher}" || {
             echo "Failed to copy cgroup launcher to ${host}" >&2
             exit 1
         }
