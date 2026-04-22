@@ -4,18 +4,32 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 REINSERT_COLOR = "#9AC9DB"
 UPDATE_COLOR = "#BB9727"
-AMPLIFICATION_COLOR = "#C82423"
+AMPLIFICATION_COLOR = "#C824A3"
 
-PANEL_FIGSIZE = (8, 5)
+PANEL_FIGSIZE = (16, 6)
 GLOBAL_FONT_FAMILY = "Arial"
 GLOBAL_FONT_SIZE = 34.0
-VALUE_FONT_SIZE = 24.0
+VALUE_FONT_SIZE = 26.0
 AXIS_LINEWIDTH = 1.5
 TICK_LINEWIDTH = 1.5
 BAR_EDGE_LINEWIDTH = 1.4
+LEFT_Y_NBINS = 6
+RIGHT_Y_NBINS = 5
+LEFT_Y_LABELPAD = 14
+RIGHT_Y_LABELPAD = 22
+LEFT_Y_TICK_PAD = 2
+RIGHT_Y_TICK_PAD = 9
+BAR_TOP_PADDING_RATIO = 0.16
+LINE_TOP_PADDING_RATIO = 0.32
+BAR_LABEL_OFFSET_RATIO = 0.02
+LINE_LABEL_OFFSET_RATIO = 0.05
+MIN_BAR_LABEL_OFFSET = 0.08
+MIN_LINE_LABEL_OFFSET = 0.04
+RIGHT_LINE_HEIGHT_FRACTION = 0.62
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,22 +43,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="write_amplification.png",
+        default="write_amplification.pdf",
         help="Output image filename (png/pdf/svg)",
     )
     parser.add_argument(
         "--x-axis-label",
-        default="GC Ratio",
+        default="GC threshold",
         help="X-axis label",
     )
     parser.add_argument(
         "--bar-y-label",
-        default="Written Data (GB)",
+        default="Write volumn (GiB)",
         help="Left y-axis label for bars",
     )
     parser.add_argument(
         "--line-y-label",
-        default="Update/Reinsert",
+        default="Write amplification",
         help="Right y-axis label for line",
     )
     return parser.parse_args()
@@ -89,6 +103,80 @@ def style_axes(ax):
     ax.tick_params(width=TICK_LINEWIDTH)
 
 
+def compute_axis_top(max_value: float, padding_ratio: float, min_extra: float) -> float:
+    if max_value <= 0:
+        return 1.0
+    return max_value + max(max_value * padding_ratio, min_extra)
+
+
+def compute_nice_axis(max_value: float, intervals: int):
+    if max_value <= 0:
+        return 1.0, 0.2
+
+    raw_step = max_value / max(1, intervals)
+    magnitude = 10 ** np.floor(np.log10(raw_step))
+    normalized = raw_step / magnitude
+
+    if normalized <= 1:
+        nice_base = 1
+    elif normalized <= 2:
+        nice_base = 2
+    elif normalized <= 5:
+        nice_base = 5
+    else:
+        nice_base = 10
+
+    step = nice_base * magnitude
+    axis_top = np.ceil(max_value / step) * step
+    return float(axis_top), float(step)
+
+
+def build_tick_formatter(axis_top: float):
+    if axis_top < 1.0:
+        precision = 2
+    elif axis_top < 10.0:
+        precision = 1
+    else:
+        precision = 0
+
+    def _formatter(value, _pos):
+        text = f"{value:.{precision}f}"
+        if precision > 0:
+            text = text.rstrip("0").rstrip(".")
+        return text
+
+    return FuncFormatter(_formatter)
+
+
+def configure_y_axis(
+    ax,
+    axis_top: float,
+    *,
+    nbins: int,
+    labelpad: float,
+    tick_pad: float,
+) -> None:
+    ax.set_ylim(0, axis_top)
+    ax.yaxis.set_major_locator(
+        MaxNLocator(nbins=nbins, min_n_ticks=max(4, nbins - 1), prune="upper")
+    )
+    ax.yaxis.set_major_formatter(build_tick_formatter(axis_top))
+    ax.yaxis.labelpad = labelpad
+    ax.tick_params(axis="y", which="major", pad=tick_pad, width=TICK_LINEWIDTH, length=6)
+
+
+def configure_left_bar_axis(ax, max_bar_value: float) -> float:
+    axis_top, tick_step = compute_nice_axis(max_bar_value, LEFT_Y_NBINS)
+    ticks = np.arange(0.0, axis_top + tick_step * 0.5, tick_step)
+
+    ax.set_ylim(0, axis_top)
+    ax.set_yticks(ticks)
+    ax.yaxis.set_major_formatter(build_tick_formatter(axis_top))
+    ax.yaxis.labelpad = LEFT_Y_LABELPAD
+    ax.tick_params(axis="y", which="major", pad=LEFT_Y_TICK_PAD, width=TICK_LINEWIDTH, length=6)
+    return axis_top
+
+
 def plot(gc_ratios, reinsert_bytes, update_bytes, ratio, args: argparse.Namespace) -> None:
     plt.rcParams.update(
         {
@@ -105,12 +193,14 @@ def plot(gc_ratios, reinsert_bytes, update_bytes, ratio, args: argparse.Namespac
     width = 0.36
 
     fig, ax1 = plt.subplots(figsize=PANEL_FIGSIZE)
+    max_bar_value = float(max(np.max(reinsert_gb), np.max(update_gb)))
+    bar_label_offset = max(max_bar_value * BAR_LABEL_OFFSET_RATIO, MIN_BAR_LABEL_OFFSET)
 
     bars_reinsert = ax1.bar(
         x - width / 2,
         reinsert_gb,
         width,
-        label="Reinsert Data",
+        label="Reinsert",
         color=REINSERT_COLOR,
         edgecolor="black",
         linewidth=BAR_EDGE_LINEWIDTH,
@@ -119,7 +209,7 @@ def plot(gc_ratios, reinsert_bytes, update_bytes, ratio, args: argparse.Namespac
         x + width / 2,
         update_gb,
         width,
-        label="Update Data",
+        label="Parity update",
         color=UPDATE_COLOR,
         edgecolor="black",
         linewidth=BAR_EDGE_LINEWIDTH,
@@ -129,50 +219,65 @@ def plot(gc_ratios, reinsert_bytes, update_bytes, ratio, args: argparse.Namespac
     ax1.set_xticklabels(gc_ratios)
     ax1.set_xlabel(args.x_axis_label)
     ax1.set_ylabel(args.bar_y_label)
-    ax1.set_ylim(bottom=0)
     style_axes(ax1)
+    configure_left_bar_axis(ax1, max_bar_value)
 
     ax2 = ax1.twinx()
+    line_x = x + width / 2
     (line_ratio,) = ax2.plot(
-        x,
+        line_x,
         ratio,
         marker="o",
         markersize=8,
         linewidth=2.5,
         linestyle="-",
-        label="Update/Reinsert",
+        label="Write amplification",
         color=AMPLIFICATION_COLOR,
     )
     ax2.set_ylabel(args.line_y_label)
-    ax2.set_ylim(bottom=0)
     style_axes(ax2)
+    max_ratio_value = float(np.max(ratio))
+    line_label_offset = max(max_ratio_value * LINE_LABEL_OFFSET_RATIO, MIN_LINE_LABEL_OFFSET)
+    right_axis_top = max(
+        compute_axis_top(
+            max_ratio_value + line_label_offset,
+            padding_ratio=LINE_TOP_PADDING_RATIO,
+            min_extra=0.12,
+        ),
+        (max_ratio_value + line_label_offset) / RIGHT_LINE_HEIGHT_FRACTION,
+    )
+    configure_y_axis(
+        ax2,
+        right_axis_top,
+        nbins=RIGHT_Y_NBINS,
+        labelpad=RIGHT_Y_LABELPAD,
+        tick_pad=RIGHT_Y_TICK_PAD,
+    )
 
     for bar in list(bars_reinsert) + list(bars_update):
         h = bar.get_height()
         ax1.text(
             bar.get_x() + bar.get_width() / 2,
-            h,
-            f"{h:.2f}",
+            h + bar_label_offset,
+            f"{int(round(h))}",
             ha="center",
             va="bottom",
             fontsize=VALUE_FONT_SIZE,
         )
 
-    y_offset = 0.03 * max(1.0, float(np.max(ratio)))
-    for xi, yi in zip(x, ratio):
+    for xi, yi in zip(line_x, ratio):
         ax2.text(
             float(xi),
-            yi + y_offset,
-            f"{yi:.2f}",
+            yi - line_label_offset,
+            f"{yi:.1f}",
             ha="center",
-            va="bottom",
+            va="top",
             fontsize=VALUE_FONT_SIZE,
-            color=AMPLIFICATION_COLOR,
         )
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2 = [line_ratio]
-    labels2 = ["Update/Reinsert"]
+    labels2 = ["Write amplification"]
     fig.legend(
         handles1 + handles2,
         labels1 + labels2,
@@ -180,11 +285,12 @@ def plot(gc_ratios, reinsert_bytes, update_bytes, ratio, args: argparse.Namespac
         bbox_to_anchor=(0.5, 1.03),
         ncol=3,
         frameon=False,
-        fontsize=GLOBAL_FONT_SIZE * 0.7,
+        fontsize=GLOBAL_FONT_SIZE,
     )
 
-    ax1.grid(axis="y", linestyle="--", alpha=0.35)
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    ax1.set_axisbelow(True)
+    ax1.grid(axis="y", which="major", linestyle="--", alpha=0.35)
+    fig.tight_layout(rect=(0.02, 0, 0.98, 0.93))
     fig.savefig(args.output)
     print(f"Saved plot to {args.output}")
 
