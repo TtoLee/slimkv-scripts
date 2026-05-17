@@ -4,18 +4,17 @@ set -euo pipefail
 
 nickname=""
 project_dir="/home/lijinming/tebis"
+script_dir="${project_dir}/ycsb_log/scripts"
 
 repeat_times=5
 gc_method=none
 backup_methods=(
-	elect
 	offline_coding
-	replication
 )
 load_times=100000000
 run_times=500000000
-ops_lower_threshold=000000000
-ops_higher_threshold=300000000
+ops_lower_threshold=200000000
+ops_higher_threshold=800000000
 workloads=(
 	load
 )
@@ -132,7 +131,7 @@ run_latency_summary_for_backup() {
 	summary_prefix="${students_results_dir}/${backup_label}_${workload}_students"
 
 	local -a cmd
-	cmd=("${project_dir}/latency_breakdown_with_students.sh")
+	cmd=("${script_dir}/latency_breakdown_with_students.sh")
 	local idx
 	for idx in "${!log_paths[@]}"; do
 		cmd+=( -l "${log_paths[$idx]}" -G "run_$(printf "%02d" $((idx + 1)))" )
@@ -161,7 +160,7 @@ for workload in "${workloads[@]}"; do
 
 			echo "Run ${run_idx}/${repeat_times}: backup=${backup_label}, workload=${workload}, tag=${run_tag}" >&2
 
-			"${project_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
+			"${script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
 				-r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
 				-d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" \
 				-s "${server_log_path}"

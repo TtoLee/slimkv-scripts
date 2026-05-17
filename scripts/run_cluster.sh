@@ -18,7 +18,7 @@ HOSTS=(
 	10.118.0.32
 )
 ZOOKEEPER_HOST=10.118.0.28
-CLIENT_HOST=10.118.0.227
+CLIENT_HOST=10.118.0.30
 ZOOKEEPER_PORT=2181
 ZOOKEEPER_ENDPOINT=${ZOOKEEPER_HOST}:${ZOOKEEPER_PORT}
 
@@ -234,6 +234,9 @@ run_client() {
     client_cmd="numactl --physcpubind=48-95 --membind=1 ./ycsb-async-tebis -threads ${client_threads} -w l -zookeeper ${ZOOKEEPER_ENDPOINT} -dbnum 1 -e ${execution_plan_path} -insertStart 0 -o ${UCAS_DIR}/${client_output_path} > /tmp/lijinming_tebis_client.log"
     remote_ops_file="${UCAS_DIR}/${client_output_path}/run_${workload}/ops.txt"
     killed_by_threshold=0
+    if [[ ${workload} == "d" ]]; then
+        client_cmd="numactl --physcpubind=48-95 --membind=1 ./ycsb-async-tebis -threads ${client_threads} -w l -zookeeper ${ZOOKEEPER_ENDPOINT} -dbnum 1 -ackOnReply -e ${execution_plan_path} -insertStart 0 -o ${UCAS_DIR}/${client_output_path} > /tmp/lijinming_tebis_client.log"
+    fi
 
     echo "Server startup complete, starting client..."
     start_time=$(date +%s)

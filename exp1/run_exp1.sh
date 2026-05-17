@@ -4,17 +4,19 @@ set -euo pipefail
 
 nickname=""
 project_dir="/home/lijinming/tebis"
+script_dir="${project_dir}/ycsb_log/scripts"
 
 epoch=5
 gc_method=none
 backup_methods=(
     replication
+    elect
     offline_coding
 )
 load_times=100000000
-run_times=500000000
-ops_lower_threshold=000000000
-ops_higher_threshold=300000000
+run_times=700000000
+ops_lower_threshold=200000000
+ops_higher_threshold=500000000
 workloads=(
     load
     a
@@ -23,10 +25,14 @@ workloads=(
     d
     ) 
 server_threads=4
-client_threads=32
+client_threads=16
 date_time=$(date +%Y%m%d_%H%M%S)
 results_dir=""
 plot_dir=""
+latency_dir=""
+client_logs_dir=""
+plot_inputs_dir=""
+filtered_ops_dir=""
 unified_metrics_file=""
 
 latency_hosts=(
@@ -64,10 +70,13 @@ if ! [[ "${epoch}" =~ ^[0-9]+$ ]] || [[ "${epoch}" -le 0 ]]; then
 fi
 
 results_dir="${project_dir}/ycsb_log/exp1/${nickname}_${date_time}"
-mkdir -p "${results_dir}"
 plot_dir="${results_dir}/output"
-mkdir -p "${plot_dir}"
-unified_metrics_file="${results_dir}/throughput_latency_unified.tsv"
+latency_dir="${results_dir}/latency"
+client_logs_dir="${results_dir}/client_logs"
+plot_inputs_dir="${results_dir}/plot_inputs"
+filtered_ops_dir="${plot_inputs_dir}/filtered_ops"
+mkdir -p "${plot_dir}" "${latency_dir}" "${client_logs_dir}" "${filtered_ops_dir}"
+unified_metrics_file="${latency_dir}/throughput_latency_unified.tsv"
 printf "section\tworkload\tbackup_method\tepoch\tmetric\tgroup\tselected_total_count\tthroughput_kops\tavg_us\tstddev_us\tmin_us\tmax_us\tp50_us\tp99_us\tp999_us\n" > "${unified_metrics_file}"
 
 declare -A sample_ops_paths
@@ -94,7 +103,7 @@ resolve_backup_config() {
 
 filter_ops_file() {
     local ops_file=$1
-    local tmp_file
+    local filtered_file=$2
     local higher_threshold
 
     higher_threshold=${ops_higher_threshold}
@@ -104,10 +113,10 @@ filter_ops_file() {
 
     if [[ ! -f "${ops_file}" ]]; then
         echo "Skip filtering, file not found: ${ops_file}" >&2
-        return
+        return 1
     fi
 
-    tmp_file=$(mktemp)
+    mkdir -p "$(dirname "${filtered_file}")"
     awk -v lower_threshold="${ops_lower_threshold}" -v higher_threshold="${higher_threshold}" '
     {
         num_count = 0
@@ -125,8 +134,8 @@ filter_ops_file() {
             print
         }
     }
-    ' "${ops_file}" > "${tmp_file}"
-    mv "${tmp_file}" "${ops_file}"
+    ' "${ops_file}" > "${filtered_file}"
+    echo "${filtered_file}"
 }
 
 compute_kops_from_ops_file() {
@@ -172,7 +181,7 @@ run_latency_summary_for_backup() {
     fi
 
     local filtered_students_summary_file
-    filtered_students_summary_file="${results_dir}/${backup_label}_${workload}.students.tsv"
+    filtered_students_summary_file="${latency_dir}/${backup_label}_${workload}.students.tsv"
     echo "Generating latency summary for backup=${backup_label}, workload=${workload}" >&2
 
     summarize_latency_for_workload "${workload}" "${filtered_students_summary_file}" "${log_paths[@]}"
@@ -518,16 +527,29 @@ for workload in "${workloads[@]}"; do
             server_log_path="/tmp/lijinming_tebis_server_${backup_label}_${workload}_${run_tag}.log"
 
             echo "Epoch ${ep}/${epoch}: workload=${workload}, method=${backup_label}"
-            "${project_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
+            "${script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
                 -r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
                 -d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" \
                 -s "${server_log_path}"
 
-            ops_file="${output_path}/run_${workload}/ops.txt"
-            filter_ops_file "${ops_file}"
+            if [[ ! -d "${output_path}" ]]; then
+                echo "Missing collected client output directory: ${output_path}" >&2
+                exit 1
+            fi
 
-            kops=$(compute_kops_from_ops_file "${ops_file}") || {
-                echo "Failed to compute throughput from ${ops_file}" >&2
+            cp -a "${output_path}" "${client_logs_dir}/"
+            client_log_path="${client_logs_dir}/$(basename "${output_path}")"
+
+            ops_file="${client_log_path}/run_${workload}/ops.txt"
+            filtered_ops_relative="plot_inputs/filtered_ops/${backup_label}_${workload}_ep${ep}.ops.txt"
+            filtered_ops_file="${results_dir}/${filtered_ops_relative}"
+            filter_ops_file "${ops_file}" "${filtered_ops_file}" > /dev/null || {
+                echo "Failed to filter ${ops_file}" >&2
+                exit 1
+            }
+
+            kops=$(compute_kops_from_ops_file "${filtered_ops_file}") || {
+                echo "Failed to compute throughput from ${filtered_ops_file}" >&2
                 exit 1
             }
 
@@ -539,9 +561,9 @@ for workload in "${workloads[@]}"; do
 
             sample_key="${backup_label}_${workload}"
             if [[ -n "${sample_ops_paths[${sample_key}]:-}" ]]; then
-                sample_ops_paths["${sample_key}"]+=";${ops_file}"
+                sample_ops_paths["${sample_key}"]+=";${filtered_ops_relative}"
             else
-                sample_ops_paths["${sample_key}"]="${ops_file}"
+                sample_ops_paths["${sample_key}"]="${filtered_ops_relative}"
             fi
 
             log_paths_for_summary+=("${server_log_path}")
@@ -552,15 +574,17 @@ for workload in "${workloads[@]}"; do
     done
 done
 
-groups_file=$(mktemp)
-summary_plot_file=$(mktemp)
+groups_file="${plot_inputs_dir}/groups-file.txt"
+summary_plot_file="${plot_inputs_dir}/summary-input.tsv"
+: > "${groups_file}"
+: > "${summary_plot_file}"
 
 for workload in "${workloads[@]}"; do
     group_line=""
     for backup_label in "${backup_methods[@]}"; do
         group_line+="${sample_ops_paths[${backup_label}_${workload}]} "
 
-        summary_file="${results_dir}/${backup_label}_${workload}.students.tsv"
+        summary_file="${latency_dir}/${backup_label}_${workload}.students.tsv"
         if [[ ! -f "${summary_file}" ]]; then
             echo "Missing latency summary file: ${summary_file}" >&2
             exit 1
@@ -592,14 +616,18 @@ done
 item_label_csv=$(printf "%s," "${display_backup_labels[@]}")
 item_label_csv=${item_label_csv%,}
 
-plot_output_dir="${plot_dir}"
+plot_output_dir="output"
+groups_file_arg="plot_inputs/groups-file.txt"
+summary_plot_file_arg="plot_inputs/summary-input.tsv"
 
 echo "Executing command:"
-echo "python3 \"${project_dir}/plot_grouped_ops_bar.py\" --groups-file \"${groups_file}\" --summary-input \"${summary_plot_file}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y1-axis-label \"Throughput (kops/sec)\" --y2-axis-label \"P50 latency (us)\" --y3-axis-label \"P99 latency (us)\" --y4-axis-label \"P999 latency (us)\" --output \"${plot_output_dir}\""
+echo "cd \"${results_dir}\" && python3 \"${script_dir}/plot_grouped_ops_bar.py\" --groups-file \"${groups_file_arg}\" --summary-input \"${summary_plot_file_arg}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y1-axis-label \"Throughput (kops/sec)\" --y2-axis-label \"P50 latency (us)\" --y3-axis-label \"P99 latency (us)\" --y4-axis-label \"P999 latency (us)\" --output \"${plot_output_dir}\""
 
-python3 "${project_dir}/plot_grouped_ops_bar.py" \
-    --groups-file "${groups_file}" \
-    --summary-input "${summary_plot_file}" \
+(
+cd "${results_dir}"
+python3 "${script_dir}/plot_grouped_ops_bar.py" \
+    --groups-file "${groups_file_arg}" \
+    --summary-input "${summary_plot_file_arg}" \
     --bar-label "${bar_label_csv}" \
     --item-labels "${item_label_csv}" \
     --x-axis-label "Workload" \
@@ -608,3 +636,4 @@ python3 "${project_dir}/plot_grouped_ops_bar.py" \
     --y3-axis-label "P99 latency (us)" \
     --y4-axis-label "P999 latency (us)" \
     --output "${plot_output_dir}"
+)

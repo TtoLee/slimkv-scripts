@@ -30,18 +30,13 @@ Y_LABEL_Y = 0.5
 X_LABEL_PAD = 10
 X_AXIS_TICK_TARGET = 6
 X_AXIS_MIN_RIGHT_MARGIN = 1
-FINAL_TIME_COLLISION_GAP = 8
-END_LABEL_X_OFFSET = -10
-END_LABEL_Y_OFFSET = 3.5
 AVG_LABEL_Y_OFFSET = 4
-GUIDE_LINE_WIDTH = 2
 RIGHT_LABEL_X_OFFSET = -10
 LEGEND_LINE_X_SPAN = 0.06
 LEGEND_LABEL_GAP = 0.03
 LEGEND_ITEM_Y_TOP = 0.85
 LEGEND_ITEM_Y_BOTTOM = 0.15
-MAX_CHANGE_TEXT_SHIFT_LEFT = 20
-RIGHT_LABEL_EXTRA_TICKS = 0
+RIGHT_LABEL_EXTRA_MINOR_TICKS = 1
 
 
 class HandlerStackedLines(HandlerBase):
@@ -234,7 +229,7 @@ def mean_series(smoothed_runs):
     return mean_times, mean_values
 
 
-def annotate_max_change_two_series(ax, series_a, series_b, end_times=None):
+def annotate_max_change_two_series(ax, series_a, series_b):
     """Add dual-style max-change annotation between two series and return summary string."""
     label1 = series_a["label"]
     times1 = series_a["times"]
@@ -264,18 +259,12 @@ def annotate_max_change_two_series(ax, series_a, series_b, end_times=None):
     y_offset = series1_map[max_t]
     y_text = y_offset
     lower_end = min(y_target, y_offset)
-    text_x_offset = 0
-    text_ha = "center"
-    if end_times:
-        if any(abs(max_t - end_time) <= FINAL_TIME_COLLISION_GAP for end_time in end_times):
-            text_x_offset = MAX_CHANGE_TEXT_SHIFT_LEFT
-            text_ha = "right"
     ax.annotate(
         annotation_text,
         xy=(max_t, lower_end),
-        xytext=(text_x_offset, -14),
+        xytext=(0, -14),
         textcoords="offset points",
-        ha=text_ha,
+        ha="center",
         va="top",
         fontsize=GLOBAL_VALUE_FONT_SIZE,
     )
@@ -386,7 +375,11 @@ def expand_x_right_for_avg_labels(x_ticks, x_right: float, plotted_series, show_
         return x_right
 
     major_step = x_ticks[1] - x_ticks[0] if len(x_ticks) >= 2 else max(1.0, x_right)
-    extra_margin = max(X_AXIS_MIN_RIGHT_MARGIN, float(major_step) * RIGHT_LABEL_EXTRA_TICKS)
+    minor_step = major_step / 2 if major_step >= 2 else major_step
+    extra_margin = max(
+        X_AXIS_MIN_RIGHT_MARGIN,
+        float(minor_step) * RIGHT_LABEL_EXTRA_MINOR_TICKS,
+    )
     return max(x_right, x_ticks[-1] + extra_margin)
 
 
@@ -416,64 +409,27 @@ def extend_x_ticks_for_right_margin(x_ticks, x_minor_ticks, x_right: float):
     return extended_ticks, x_tick_labels, extended_minor_ticks
 
 
-def annotate_series_end_times(ax, plotted_series, show_avg: bool, x_right: float):
-    """Mark each series end time with a vertical dashed guide and labels beside it."""
+def annotate_series_averages(ax, plotted_series, show_avg: bool, x_right: float):
+    """Label each series average throughput near the right edge."""
     if not plotted_series:
         return
 
-    sorted_endpoints = []
+    if not show_avg:
+        return
+
     for series in plotted_series:
-        times = series["times"]
-        values = series["values"]
-        if not times or not values:
+        if series["avg_value"] is None:
             continue
-        sorted_endpoints.append(series)
-
-    sorted_endpoints.sort(key=lambda item: item["times"][-1])
-    previous_end_time = None
-    collision_rank = 0
-
-    for series in sorted_endpoints:
-        end_time = series["times"][-1]
-        end_value = series["values"][-1]
-        if previous_end_time is not None and abs(end_time - previous_end_time) <= FINAL_TIME_COLLISION_GAP:
-            collision_rank += 1
-        else:
-            collision_rank = 0
-
-        ax.vlines(
-            end_time,
-            ymin=0,
-            ymax=end_value,
-            colors="black",
-            linestyles="--",
-            linewidth=GUIDE_LINE_WIDTH,
-            zorder=1,
-        )
         ax.annotate(
-            f"{format_tick_value(end_time)}",
-            xy=(end_time, 0),
-            xycoords=ax.get_xaxis_transform(),
-            xytext=(END_LABEL_X_OFFSET, END_LABEL_Y_OFFSET - collision_rank * 12),
+            f"{int(round(series['avg_value']))}",
+            xy=(x_right, series["avg_value"]),
+            xytext=(RIGHT_LABEL_X_OFFSET, AVG_LABEL_Y_OFFSET),
             textcoords="offset points",
             ha="right",
             va="bottom",
-            color="black",
+            color=series["color"],
             fontsize=GLOBAL_VALUE_FONT_SIZE,
         )
-
-        # if show_avg and series["avg_value"] is not None:
-        #     ax.annotate(
-        #         f"{int(round(series['avg_value']))}",
-        #         xy=(x_right, series["avg_value"]),
-        #         xytext=(RIGHT_LABEL_X_OFFSET, AVG_LABEL_Y_OFFSET + collision_rank * 12),
-        #         textcoords="offset points",
-        #         ha="right",
-        #         va="bottom",
-        #         color=series["color"],
-        #         fontsize=GLOBAL_VALUE_FONT_SIZE,
-        #     )
-        # previous_end_time = end_time
 
 
 def draw_custom_legend(legend_ax, plotted_series, show_avg: bool):
@@ -531,7 +487,14 @@ def main():
     parser.add_argument("--label2", default="Series 2", help="Legend label for second series")
     parser.add_argument("--label3", default="Series 3", help="Legend label for third series")
     parser.add_argument("--output", default="run_ops_throughput_triple.pdf", help="Output image path")
-    parser.add_argument("--window", type=int, default=5, help="Averaging window in seconds")
+    parser.add_argument(
+        "--window",
+        nargs="?",
+        const=5,
+        default=5,
+        type=int,
+        help="Averaging window in seconds; defaults to 5 when the option is present without a value",
+    )
     parser.add_argument(
         "--avg",
         action="store_true",
@@ -647,12 +610,10 @@ def main():
 
     max_change_summary = None
     if len(groups) == 2:
-        end_times = [series["times"][-1] for series in plotted_series if series["times"]]
         max_change_summary = annotate_max_change_two_series(
             ax,
             plotted_series[0],
             plotted_series[1],
-            end_times=end_times,
         )
 
     if args.avg:
@@ -681,7 +642,7 @@ def main():
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_tick_labels)
     ax.grid(False)
-    annotate_series_end_times(ax, plotted_series, args.avg, x_right)
+    annotate_series_averages(ax, plotted_series, args.avg, x_right)
     ax.tick_params(axis="x", width=TICK_LINEWIDTH)
     ax.tick_params(axis="x", which="minor", width=TICK_LINEWIDTH, length=4, labelbottom=False)
     ax.tick_params(axis="y", width=TICK_LINEWIDTH)

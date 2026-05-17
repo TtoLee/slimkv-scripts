@@ -14,7 +14,7 @@ regions_file="regions_file_elect"
 load_times=100000000
 run_times=500000000
 ops_lower_threshold=000000000
-ops_higher_threshold=300000000
+ops_higher_threshold=900000000
 workloads=(
 	load
 )
@@ -24,7 +24,7 @@ date_time=$(date +%Y%m%d_%H%M%S)
 stable_check_interval_sec=100
 stable_check_timeout_sec=0
 servers_may_be_running=0
-ec_payload_bytes_per_stripe=$((2 * 1024 * 1024 - 4096))
+ec_payload_bytes_per_stripe=$((4 * 2 * 1024 * 1024 - 4096 * 4))
 
 results_dir=""
 summary_file=""
@@ -45,12 +45,12 @@ ELECT_PRIMARY_TO_LEADER_BYTES=0
 ELECT_LEADER_TO_OTHER_BYTES=0
 ELECT_TOTAL_BYTES=0
 ELECT_CODED_STRIPE_SUM=0
-ELECT_VOL_USED_BYTES=0
+ELECT_TOTAL_PRIMARY_BYTES=0
 ELECT_EC_DATA_SIZE_BYTES=0
 ELECT_PRIMARY_TO_LEADER_GB="0"
 ELECT_LEADER_TO_OTHER_GB="0"
 ELECT_TOTAL_GB="0"
-ELECT_VOL_USED_GB="0"
+ELECT_TOTAL_PRIMARY_GB="0"
 ELECT_EC_DATA_SIZE_GB="0"
 
 declare -A LAST_HOST_STATUS=()
@@ -62,8 +62,8 @@ declare -A LAST_HOST_P2L_GB=()
 declare -A LAST_HOST_L2O_GB=()
 declare -A LAST_HOST_TOTAL_GB=()
 declare -A LAST_HOST_CODED_STRIPE=()
-declare -A LAST_HOST_VOL_USED_BYTES=()
-declare -A LAST_HOST_VOL_USED_GB=()
+declare -A LAST_HOST_TOTAL_PRIMARY_BYTES=()
+declare -A LAST_HOST_TOTAL_PRIMARY_GB=()
 declare -A LAST_HOST_EC_DATA_SIZE_BYTES=()
 declare -A LAST_HOST_EC_DATA_SIZE_GB=()
 
@@ -76,8 +76,8 @@ declare -A FINAL_HOST_P2L_GB=()
 declare -A FINAL_HOST_L2O_GB=()
 declare -A FINAL_HOST_TOTAL_GB=()
 declare -A FINAL_HOST_CODED_STRIPE=()
-declare -A FINAL_HOST_VOL_USED_BYTES=()
-declare -A FINAL_HOST_VOL_USED_GB=()
+declare -A FINAL_HOST_TOTAL_PRIMARY_BYTES=()
+declare -A FINAL_HOST_TOTAL_PRIMARY_GB=()
 declare -A FINAL_HOST_EC_DATA_SIZE_BYTES=()
 declare -A FINAL_HOST_EC_DATA_SIZE_GB=()
 
@@ -89,8 +89,8 @@ declare -A FINAL_WORKLOAD_P2L_GB=()
 declare -A FINAL_WORKLOAD_L2O_GB=()
 declare -A FINAL_WORKLOAD_TOTAL_GB=()
 declare -A FINAL_WORKLOAD_CODED_STRIPE_SUM=()
-declare -A FINAL_WORKLOAD_VOL_USED_BYTES=()
-declare -A FINAL_WORKLOAD_VOL_USED_GB=()
+declare -A FINAL_WORKLOAD_TOTAL_PRIMARY_BYTES=()
+declare -A FINAL_WORKLOAD_TOTAL_PRIMARY_GB=()
 declare -A FINAL_WORKLOAD_EC_DATA_SIZE_BYTES=()
 declare -A FINAL_WORKLOAD_EC_DATA_SIZE_GB=()
 
@@ -220,26 +220,26 @@ extract_host_last_two() {
 		p2l = $0
 		l2o = $0
 		coded = $0
-		used = $0
+		total_primary = $0
 		sub(/^.*primary to leader parity: /, "", p2l)
 		sub(/ B, leader parity to other parity:.*$/, "", p2l)
 		sub(/^.*leader parity to other parity: /, "", l2o)
 		sub(/ B.*$/, "", l2o)
 		sub(/^.*coded stripe: /, "", coded)
 		sub(/[^0-9].*$/, "", coded)
-		sub(/^.*vol_fd used space: /, "", used)
-		sub(/ B.*$/, "", used)
-		if (ts ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ && p2l ~ /^[0-9]+$/ && l2o ~ /^[0-9]+$/ && coded ~ /^[0-9]+$/ && used ~ /^[0-9]+$/) {
+		sub(/^.*total primary byte: /, "", total_primary)
+		sub(/ B.*$/, "", total_primary)
+		if (ts ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ && p2l ~ /^[0-9]+$/ && l2o ~ /^[0-9]+$/ && coded ~ /^[0-9]+$/ && total_primary ~ /^[0-9]+$/) {
 			prev_ts = last_ts
 			prev_p2l = last_p2l
 			prev_l2o = last_l2o
 			prev_coded = last_coded
-			prev_used = last_used
+			prev_total_primary = last_total_primary
 			last_ts = ts
 			last_p2l = p2l + 0
 			last_l2o = l2o + 0
 			last_coded = coded + 0
-			last_used = used + 0
+			last_total_primary = total_primary + 0
 			cnt++
 		}
 	}
@@ -248,10 +248,10 @@ extract_host_last_two() {
 			exit 2
 		}
 		if (cnt == 1) {
-			printf "ONE\t%s\t%.0f\t%.0f\t%.0f\t%.0f\tNA\t0\t0\t0\t0\n", last_ts, last_p2l, last_l2o, last_coded, last_used
+			printf "ONE\t%s\t%.0f\t%.0f\t%.0f\t%.0f\tNA\t0\t0\t0\t0\n", last_ts, last_p2l, last_l2o, last_coded, last_total_primary
 			exit 0
 		}
-		printf "OK\t%s\t%.0f\t%.0f\t%.0f\t%.0f\t%s\t%.0f\t%.0f\t%.0f\t%.0f\n", last_ts, last_p2l, last_l2o, last_coded, last_used, prev_ts, prev_p2l, prev_l2o, prev_coded, prev_used
+		printf "OK\t%s\t%.0f\t%.0f\t%.0f\t%.0f\t%s\t%.0f\t%.0f\t%.0f\t%.0f\n", last_ts, last_p2l, last_l2o, last_coded, last_total_primary, prev_ts, prev_p2l, prev_l2o, prev_coded, prev_total_primary
 	}
 	' <<< "${remote_tail}"
 }
@@ -266,12 +266,12 @@ collect_last_two_elect_overhead() {
 	local last_p2l
 	local last_l2o
 	local last_coded
-	local last_used
+	local last_total_primary
 	local prev_ts
 	local prev_p2l
 	local prev_l2o
 	local prev_coded
-	local prev_used
+	local prev_total_primary
 	local host_stable
 	local host_ec_data_size_bytes
 	local all_hosts_stable=1
@@ -281,12 +281,14 @@ collect_last_two_elect_overhead() {
 	ELECT_LEADER_TO_OTHER_BYTES=0
 	ELECT_TOTAL_BYTES=0
 	ELECT_CODED_STRIPE_SUM=0
-	ELECT_VOL_USED_BYTES=0
+	ELECT_TOTAL_PRIMARY_BYTES=0
 	ELECT_EC_DATA_SIZE_BYTES=0
 	ELECT_OVERHEAD_TIMESTAMP="PER_HOST_LAST"
 
 	for host in "${elect_hosts[@]}"; do
-		if ! host_line=$(extract_host_last_two "${host}" "${remote_log}"); then
+		if host_line=$(extract_host_last_two "${host}" "${remote_log}"); then
+			:
+		else
 			rc=$?
 			if [[ ${verbose_fail} -eq 1 ]]; then
 				if [[ ${rc} -eq 3 ]]; then
@@ -303,10 +305,10 @@ collect_last_two_elect_overhead() {
 			return 1
 		fi
 
-		IFS=$'\t' read -r row_status last_ts last_p2l last_l2o last_coded last_used prev_ts prev_p2l prev_l2o prev_coded prev_used <<< "${host_line}"
+		IFS=$'\t' read -r row_status last_ts last_p2l last_l2o last_coded last_total_primary prev_ts prev_p2l prev_l2o prev_coded prev_total_primary <<< "${host_line}"
 
 		host_stable="UNSTABLE"
-		if [[ "${row_status}" == "OK" && "${last_p2l}" == "${prev_p2l}" && "${last_l2o}" == "${prev_l2o}" && "${last_coded}" == "${prev_coded}" && "${last_used}" == "${prev_used}" ]]; then
+		if [[ "${row_status}" == "OK" && "${last_p2l}" == "${prev_p2l}" && "${last_l2o}" == "${prev_l2o}" && "${last_coded}" == "${prev_coded}" && "${last_total_primary}" == "${prev_total_primary}" ]]; then
 			host_stable="STABLE"
 		else
 			all_hosts_stable=0
@@ -321,8 +323,8 @@ collect_last_two_elect_overhead() {
 		LAST_HOST_L2O_GB["${host}"]=$(bytes_to_gb "${last_l2o}")
 		LAST_HOST_TOTAL_GB["${host}"]=$(bytes_to_gb "$((last_p2l + last_l2o))")
 		LAST_HOST_CODED_STRIPE["${host}"]=${last_coded}
-		LAST_HOST_VOL_USED_BYTES["${host}"]=${last_used}
-		LAST_HOST_VOL_USED_GB["${host}"]=$(bytes_to_gb "${last_used}")
+		LAST_HOST_TOTAL_PRIMARY_BYTES["${host}"]=${last_total_primary}
+		LAST_HOST_TOTAL_PRIMARY_GB["${host}"]=$(bytes_to_gb "${last_total_primary}")
 		host_ec_data_size_bytes=$(stripe_count_to_ec_data_bytes "${last_coded}")
 		LAST_HOST_EC_DATA_SIZE_BYTES["${host}"]=${host_ec_data_size_bytes}
 		LAST_HOST_EC_DATA_SIZE_GB["${host}"]=$(bytes_to_gb "${host_ec_data_size_bytes}")
@@ -330,7 +332,7 @@ collect_last_two_elect_overhead() {
 		ELECT_PRIMARY_TO_LEADER_BYTES=$((ELECT_PRIMARY_TO_LEADER_BYTES + last_p2l))
 		ELECT_LEADER_TO_OTHER_BYTES=$((ELECT_LEADER_TO_OTHER_BYTES + last_l2o))
 		ELECT_CODED_STRIPE_SUM=$((ELECT_CODED_STRIPE_SUM + last_coded))
-		ELECT_VOL_USED_BYTES=$((ELECT_VOL_USED_BYTES + last_used))
+		ELECT_TOTAL_PRIMARY_BYTES=$((ELECT_TOTAL_PRIMARY_BYTES + last_total_primary))
 	done
 
 	ELECT_TOTAL_BYTES=$((ELECT_PRIMARY_TO_LEADER_BYTES + ELECT_LEADER_TO_OTHER_BYTES))
@@ -338,7 +340,7 @@ collect_last_two_elect_overhead() {
 	ELECT_PRIMARY_TO_LEADER_GB=$(bytes_to_gb "${ELECT_PRIMARY_TO_LEADER_BYTES}")
 	ELECT_LEADER_TO_OTHER_GB=$(bytes_to_gb "${ELECT_LEADER_TO_OTHER_BYTES}")
 	ELECT_TOTAL_GB=$(bytes_to_gb "${ELECT_TOTAL_BYTES}")
-	ELECT_VOL_USED_GB=$(bytes_to_gb "${ELECT_VOL_USED_BYTES}")
+	ELECT_TOTAL_PRIMARY_GB=$(bytes_to_gb "${ELECT_TOTAL_PRIMARY_BYTES}")
 	ELECT_EC_DATA_SIZE_GB=$(bytes_to_gb "${ELECT_EC_DATA_SIZE_BYTES}")
 
 	if [[ ${all_hosts_stable} -eq 1 ]]; then
@@ -396,8 +398,8 @@ snapshot_final_for_workload() {
 		FINAL_HOST_L2O_GB["${key}"]=${LAST_HOST_L2O_GB["${host}"]}
 		FINAL_HOST_TOTAL_GB["${key}"]=${LAST_HOST_TOTAL_GB["${host}"]}
 		FINAL_HOST_CODED_STRIPE["${key}"]=${LAST_HOST_CODED_STRIPE["${host}"]}
-		FINAL_HOST_VOL_USED_BYTES["${key}"]=${LAST_HOST_VOL_USED_BYTES["${host}"]}
-		FINAL_HOST_VOL_USED_GB["${key}"]=${LAST_HOST_VOL_USED_GB["${host}"]}
+		FINAL_HOST_TOTAL_PRIMARY_BYTES["${key}"]=${LAST_HOST_TOTAL_PRIMARY_BYTES["${host}"]}
+		FINAL_HOST_TOTAL_PRIMARY_GB["${key}"]=${LAST_HOST_TOTAL_PRIMARY_GB["${host}"]}
 		FINAL_HOST_EC_DATA_SIZE_BYTES["${key}"]=${LAST_HOST_EC_DATA_SIZE_BYTES["${host}"]}
 		FINAL_HOST_EC_DATA_SIZE_GB["${key}"]=${LAST_HOST_EC_DATA_SIZE_GB["${host}"]}
 	done
@@ -410,8 +412,8 @@ snapshot_final_for_workload() {
 	FINAL_WORKLOAD_L2O_GB["${workload}"]=${ELECT_LEADER_TO_OTHER_GB}
 	FINAL_WORKLOAD_TOTAL_GB["${workload}"]=${ELECT_TOTAL_GB}
 	FINAL_WORKLOAD_CODED_STRIPE_SUM["${workload}"]=${ELECT_CODED_STRIPE_SUM}
-	FINAL_WORKLOAD_VOL_USED_BYTES["${workload}"]=${ELECT_VOL_USED_BYTES}
-	FINAL_WORKLOAD_VOL_USED_GB["${workload}"]=${ELECT_VOL_USED_GB}
+	FINAL_WORKLOAD_TOTAL_PRIMARY_BYTES["${workload}"]=${ELECT_TOTAL_PRIMARY_BYTES}
+	FINAL_WORKLOAD_TOTAL_PRIMARY_GB["${workload}"]=${ELECT_TOTAL_PRIMARY_GB}
 	FINAL_WORKLOAD_EC_DATA_SIZE_BYTES["${workload}"]=${ELECT_EC_DATA_SIZE_BYTES}
 	FINAL_WORKLOAD_EC_DATA_SIZE_GB["${workload}"]=${ELECT_EC_DATA_SIZE_GB}
 }
@@ -422,7 +424,7 @@ write_final_report() {
 	local host
 	local key
 
-	printf "workload\thost\tstatus\tlast_timestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\tvol_used_gb\tec_data_size_gb\n" > "${output_file}"
+	printf "workload\thost\tstatus\tlast_timestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\ttotal_primary_gb\tec_data_size_gb\n" > "${output_file}"
 
 		for workload in "${workloads[@]}"; do
 			for host in "${elect_hosts[@]}"; do
@@ -430,19 +432,19 @@ write_final_report() {
 				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 					"${workload}" "${host}" "${FINAL_HOST_STATUS[${key}]}" "${FINAL_HOST_TS[${key}]}" \
 					"${FINAL_HOST_P2L_GB[${key}]}" "${FINAL_HOST_L2O_GB[${key}]}" "${FINAL_HOST_TOTAL_GB[${key}]}" \
-					"${FINAL_HOST_VOL_USED_GB[${key}]}" "${FINAL_HOST_EC_DATA_SIZE_GB[${key}]}" \
+					"${FINAL_HOST_TOTAL_PRIMARY_GB[${key}]}" "${FINAL_HOST_EC_DATA_SIZE_GB[${key}]}" \
 					>> "${output_file}"
 			done
 	
 			printf "%s\tSUM\t%s\tPER_HOST_LAST\t%s\t%s\t%s\t%s\t%s\n" \
 				"${workload}" "${FINAL_WORKLOAD_STATUS[${workload}]}" \
 				"${FINAL_WORKLOAD_P2L_GB[${workload}]}" "${FINAL_WORKLOAD_L2O_GB[${workload}]}" "${FINAL_WORKLOAD_TOTAL_GB[${workload}]}" \
-				"${FINAL_WORKLOAD_VOL_USED_GB[${workload}]}" "${FINAL_WORKLOAD_EC_DATA_SIZE_GB[${workload}]}" \
+				"${FINAL_WORKLOAD_TOTAL_PRIMARY_GB[${workload}]}" "${FINAL_WORKLOAD_EC_DATA_SIZE_GB[${workload}]}" \
 				>> "${output_file}"
 		done
 	}
 
-printf "workload\tstatus\ttimestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\tcoded_stripe\tvol_used_gb\tec_data_size_gb\n" > "${summary_file}"
+printf "workload\tstatus\ttimestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\tcoded_stripe\ttotal_primary_gb\tec_data_size_gb\n" > "${summary_file}"
 
 echo "Running motivation exp1a with backup=${backup_label}, workloads=${workloads[*]}"
 
@@ -473,7 +475,7 @@ for workload in "${workloads[@]}"; do
 		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 			"${workload}" "${ELECT_OVERHEAD_STATUS}" "${ELECT_OVERHEAD_TIMESTAMP}" \
 			"${ELECT_PRIMARY_TO_LEADER_GB}" "${ELECT_LEADER_TO_OTHER_GB}" "${ELECT_TOTAL_GB}" \
-			"${ELECT_CODED_STRIPE_SUM}" "${ELECT_VOL_USED_GB}" "${ELECT_EC_DATA_SIZE_GB}" \
+			"${ELECT_CODED_STRIPE_SUM}" "${ELECT_TOTAL_PRIMARY_GB}" "${ELECT_EC_DATA_SIZE_GB}" \
 			>> "${summary_file}"
 
 	snapshot_final_for_workload "${workload}"

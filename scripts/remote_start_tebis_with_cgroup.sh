@@ -63,7 +63,7 @@ else
 fi
 
 sudo mkdir -p "${cgroup_dir}"
-memory_high_bytes=$((memory_limit_bytes * ))
+memory_high_bytes=$((memory_limit_bytes))
 
 echo "${memory_limit_bytes}" | sudo tee "${memory_file}" > /dev/null
 # echo "${memory_high_bytes}" | sudo tee "${memory_high_file}" > /dev/null
