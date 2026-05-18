@@ -452,6 +452,17 @@ write_host_rows() {
 	done
 }
 
+join_csv() {
+	local csv=""
+	local value
+
+	for value in "$@"; do
+		csv="${csv}${csv:+,}${value}"
+	done
+
+	printf "%s" "${csv}"
+}
+
 enable_space_occupation_for_experiment
 
 printf "workload\tbackup_method\tepoch\tstatus\ttotal_used_bytes\ttotal_used_gib\tper_host_used_bytes\tper_host_used_gib\tserver_log_path\n" > "${summary_file}"
@@ -492,7 +503,7 @@ for workload in "${workloads[@]}"; do
 				"${SPACE_TOTAL_USED_BYTES}" "${SPACE_TOTAL_USED_GIB}" \
 				"${SPACE_PER_HOST_USED_BYTES}" "${SPACE_PER_HOST_USED_GIB}" "${server_log_path}" \
 				>> "${summary_file}"
-			echo "Space occupation result: workload=${workload}, backup=${backup_label}, epoch=${ep}, total_used_gib=${SPACE_TOTAL_USED_GIB}" >&2
+			echo "Space usage result: workload=${workload}, backup=${backup_label}, epoch=${ep}, total_used_gib=${SPACE_TOTAL_USED_GIB}" >&2
 
 			write_host_rows "${workload}" "${backup_label}" "${ep}" "${server_log_path}"
 
@@ -506,3 +517,37 @@ echo "Saved space occupation summary: ${summary_file}"
 echo "Saved per-host space occupation rows: ${host_file}"
 echo ""
 cat "${summary_file}"
+
+display_workload_labels=()
+for workload in "${workloads[@]}"; do
+	if [[ ${#workload} -eq 1 ]]; then
+		display_workload_labels+=("${workload^^}")
+	else
+		display_workload_labels+=("${workload}")
+	fi
+done
+
+display_backup_labels=()
+for label in "${backup_methods[@]}"; do
+	display_backup_labels+=("${label//_/ }")
+done
+
+workload_csv=$(join_csv "${workloads[@]}")
+backup_csv=$(join_csv "${backup_methods[@]}")
+bar_label_csv=$(join_csv "${display_workload_labels[@]}")
+item_label_csv=$(join_csv "${display_backup_labels[@]}")
+plot_output_dir="${results_dir}"
+
+echo ""
+echo "Executing command:"
+echo "python3 \"${basic_script_dir}/plot_exp2_space_bar.py\" --input \"${summary_file}\" --output \"${plot_output_dir}\" --workloads \"${workload_csv}\" --backups \"${backup_csv}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y-axis-label \"Space usage (GiB)\""
+
+python3 "${basic_script_dir}/plot_exp2_space_bar.py" \
+	--input "${summary_file}" \
+	--output "${plot_output_dir}" \
+	--workloads "${workload_csv}" \
+	--backups "${backup_csv}" \
+	--bar-label "${bar_label_csv}" \
+	--item-labels "${item_label_csv}" \
+	--x-axis-label "Workload" \
+	--y-axis-label "Space usage (GiB)"
