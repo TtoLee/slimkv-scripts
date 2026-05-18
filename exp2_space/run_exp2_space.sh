@@ -34,6 +34,7 @@ results_dir=""
 summary_file=""
 host_file=""
 space_occupation_original_state=""
+space_occupation_build_enabled=0
 
 hosts=(
 	10.118.0.227
@@ -168,36 +169,29 @@ set_space_occupation_macro_state() {
 }
 
 sync_and_build_all_nodes() {
+	local cmake_args=("$@")
+
 	echo "Syncing source and building locally/remotely via ./scp.sh ..." >&2
 	(
 		cd "${project_dir}"
-		./scp.sh
+		./scp.sh "${cmake_args[@]}"
 	)
 }
 
 enable_space_occupation_for_experiment() {
-	space_occupation_original_state=$(read_space_occupation_macro_state)
-	echo "Enabling SPACE_OCCUPATION and syncing/building..." >&2
-	set_space_occupation_macro_state enabled
-	sync_and_build_all_nodes
+	echo "Building with SPACE_OCCUPATION and syncing..." >&2
+	sync_and_build_all_nodes -DSPACE_OCCUPATION=ON
+	space_occupation_build_enabled=1
 }
 
 restore_space_occupation_macro() {
-	local current_state
-
-	if [[ -z "${space_occupation_original_state}" ]]; then
+	if [[ ${space_occupation_build_enabled} -eq 0 ]]; then
 		return 0
 	fi
 
-	current_state=$(read_space_occupation_macro_state) || return 1
-	if [[ "${current_state}" == "${space_occupation_original_state}" ]]; then
-		echo "SPACE_OCCUPATION already restored (${space_occupation_original_state})." >&2
-		return 0
-	fi
-
-	echo "Restoring SPACE_OCCUPATION to ${space_occupation_original_state} and syncing/building..." >&2
-	set_space_occupation_macro_state "${space_occupation_original_state}"
+	echo "Rebuilding without SPACE_OCCUPATION and syncing..." >&2
 	sync_and_build_all_nodes
+	space_occupation_build_enabled=0
 }
 
 cleanup() {

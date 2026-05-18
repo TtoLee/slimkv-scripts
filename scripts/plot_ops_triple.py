@@ -1,10 +1,22 @@
 import argparse
+import matplotlib as mpl
+
+mpl.rcParams.update(
+    {
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "pdf.use14corefonts": False,
+        "text.usetex": False,
+    }
+)
+
 import matplotlib.pyplot as plt
 import re
 import math
 from pathlib import Path
 from matplotlib.lines import Line2D
 from matplotlib.legend_handler import HandlerBase
+from matplotlib import font_manager
 
 tebis_color = "#9AC9DB"
 elect_color = "#BB9727"
@@ -15,6 +27,12 @@ PANEL_FIGSIZE = (8, 5)
 PLOT_FIGSIZE = (PANEL_FIGSIZE[0] * 2.0, PANEL_FIGSIZE[1])
 LEGEND_FIGSIZE = (PANEL_FIGSIZE[0] * 2.0, 1.0)
 COMBINED_FIGSIZE = (PLOT_FIGSIZE[0], PLOT_FIGSIZE[1] + LEGEND_FIGSIZE[1])
+
+ARIAL_FONT_PATH = Path("/usr/local/share/fonts/arial/ARIAL.TTF")
+GLOBAL_FONT_PROPERTIES = None
+if ARIAL_FONT_PATH.exists():
+    font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
+    GLOBAL_FONT_PROPERTIES = font_manager.FontProperties(fname=str(ARIAL_FONT_PATH))
 
 GLOBAL_FONT_FAMILY = "Arial"
 GLOBAL_FONT_FALLBACKS = ["Arial"]
@@ -37,6 +55,21 @@ LEGEND_LABEL_GAP = 0.03
 LEGEND_ITEM_Y_TOP = 0.85
 LEGEND_ITEM_Y_BOTTOM = 0.15
 RIGHT_LABEL_EXTRA_MINOR_TICKS = 1
+
+
+def apply_output_font(fig):
+    """Bind all figure text to the configured TTF file, avoiding font-cache surprises."""
+    if GLOBAL_FONT_PROPERTIES is None:
+        return
+
+    for text in fig.findobj(match=mpl.text.Text):
+        fontsize = text.get_fontsize()
+        fontweight = text.get_fontweight()
+        fontstyle = text.get_fontstyle()
+        text.set_fontproperties(GLOBAL_FONT_PROPERTIES)
+        text.set_fontsize(fontsize)
+        text.set_fontweight(fontweight)
+        text.set_fontstyle(fontstyle)
 
 
 class HandlerStackedLines(HandlerBase):
@@ -519,11 +552,15 @@ def main():
     )
     args = parser.parse_args()
 
-    plt.rcParams.update(
+    mpl.rcParams.update(
         {
             "font.size": GLOBAL_FONT_SIZE,
-            "font.family": "sans-serif",
+            "font.family": GLOBAL_FONT_FAMILY,
             "font.sans-serif": GLOBAL_FONT_FALLBACKS,
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+            "pdf.use14corefonts": False,
+            "text.usetex": False,
             "axes.linewidth": AXIS_LINEWIDTH,
         }
     )
@@ -650,6 +687,7 @@ def main():
         spine.set_linewidth(AXIS_LINEWIDTH)
 
     draw_custom_legend(legend_ax, plotted_series, args.avg)
+    apply_output_font(fig)
 
     fig.subplots_adjust(left=0.13, right=0.97, bottom=0.2, top=0.97)
 

@@ -8,8 +8,20 @@ import statistics
 from pathlib import Path
 from typing import List, Tuple
 
+import matplotlib as mpl
+
+mpl.rcParams.update(
+    {
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "pdf.use14corefonts": False,
+        "text.usetex": False,
+    }
+)
+
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import font_manager
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 tebis_color = '#9AC9DB'
@@ -20,6 +32,12 @@ BAR_COLORS = [tebis_color, elect_color, slimkv_color]
 LINE_RE = re.compile(r"(\d+)\s+sec\s+([\deE.+-]+)\s+operations\s+([\deE.+-]+)\s+ops/sec")
 PM_RE = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*±\s*([+-]?\d+(?:\.\d+)?)\s*$")
 PANEL_FIGSIZE = (8, 5)
+ARIAL_FONT_PATH = Path("/usr/local/share/fonts/arial/ARIAL.TTF")
+GLOBAL_FONT_PROPERTIES = None
+if ARIAL_FONT_PATH.exists():
+    font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
+    GLOBAL_FONT_PROPERTIES = font_manager.FontProperties(fname=str(ARIAL_FONT_PATH))
+
 GLOBAL_FONT_FAMILY = "Arial"
 GLOBAL_FONT_FALLBACKS = ["Arial"]
 GLOBAL_FONT_SIZE = 34.0
@@ -28,6 +46,21 @@ AXIS_LINEWIDTH = 1.5
 TICK_LINEWIDTH = 1.5
 BAR_EDGE_LINEWIDTH = 1.4
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def apply_output_font(fig):
+    """Bind figure text to the configured TTF file before PDF export."""
+    if GLOBAL_FONT_PROPERTIES is None:
+        return
+
+    for text in fig.findobj(match=mpl.text.Text):
+        fontsize = text.get_fontsize()
+        fontweight = text.get_fontweight()
+        fontstyle = text.get_fontstyle()
+        text.set_fontproperties(GLOBAL_FONT_PROPERTIES)
+        text.set_fontsize(fontsize)
+        text.set_fontweight(fontweight)
+        text.set_fontstyle(fontstyle)
 
 
 def parse_comma_list(value: str) -> List[str]:
@@ -702,6 +735,7 @@ def save_legend_figure(handles, labels, output: Path) -> None:
         ncol=n_items,
         fontsize=GLOBAL_FONT_SIZE,
     )
+    apply_output_font(fig)
     fig.savefig(output, dpi=300, pad_inches=0.02)
     plt.close(fig)
     print(f"Saved legend figure to {output}")
@@ -713,10 +747,14 @@ def plot_panels_separately(
     output_dir: Path,
     colors,
 ):
-    plt.rcParams.update({
+    mpl.rcParams.update({
         "font.size": GLOBAL_FONT_SIZE,
-        "font.family": "sans-serif",
+        "font.family": GLOBAL_FONT_FAMILY,
         "font.sans-serif": GLOBAL_FONT_FALLBACKS,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "pdf.use14corefonts": False,
+        "text.usetex": False,
         "axes.linewidth": AXIS_LINEWIDTH,
     })
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -746,6 +784,7 @@ def plot_panels_separately(
 
         # Use fixed margins and no tight bounding-box so all output figures have identical size.
         fig.subplots_adjust(left=0.24, right=0.98, bottom=0.21, top=0.965)
+        apply_output_font(fig)
         fig.savefig(panel_output, dpi=300)
         plt.close(fig)
         print(f"Saved figure to {panel_output}")

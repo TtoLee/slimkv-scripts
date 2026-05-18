@@ -8,8 +8,17 @@ from pathlib import Path
 
 import matplotlib
 
+matplotlib.rcParams.update(
+    {
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "pdf.use14corefonts": False,
+        "text.usetex": False,
+    }
+)
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.colors import to_rgba
 from matplotlib.ticker import AutoMinorLocator, FormatStrFormatter, NullFormatter
 
@@ -23,6 +32,12 @@ LEGEND_FIGSIZE = (16, 0.5)
 LEGEND_COLUMN_SPACING = 0.8
 LEGEND_HANDLE_TEXT_PAD = 0.4
 LEGEND_MARKER_SIZE = 18
+ARIAL_FONT_PATH = Path("/usr/local/share/fonts/arial/ARIAL.TTF")
+GLOBAL_FONT_PROPERTIES = None
+if ARIAL_FONT_PATH.exists():
+    font_manager.fontManager.addfont(str(ARIAL_FONT_PATH))
+    GLOBAL_FONT_PROPERTIES = font_manager.FontProperties(fname=str(ARIAL_FONT_PATH))
+
 GLOBAL_FONT_FAMILY = "Arial"
 GLOBAL_FONT_FALLBACKS = ["Arial"]
 GLOBAL_FONT_SIZE = 34.0
@@ -34,6 +49,21 @@ SCATTER_SIZE = 20
 VALID_PERCENT_ALPHA = 1
 NONZERO_COUNT_ALPHA = 1
 X_AXIS_TARGET_TICKS = 11
+
+
+def apply_output_font(fig):
+    """Bind figure text to the configured TTF file before PDF export."""
+    if GLOBAL_FONT_PROPERTIES is None:
+        return
+
+    for text in fig.findobj(match=matplotlib.text.Text):
+        fontsize = text.get_fontsize()
+        fontweight = text.get_fontweight()
+        fontstyle = text.get_fontstyle()
+        text.set_fontproperties(GLOBAL_FONT_PROPERTIES)
+        text.set_fontsize(fontsize)
+        text.set_fontweight(fontweight)
+        text.set_fontstyle(fontstyle)
 
 
 def parse_args():

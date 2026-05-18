@@ -12,9 +12,9 @@ backup_methods=(
 	offline_coding
 )
 load_times=100000000
-run_times=1000000000
+run_times=800000000
 ops_lower_threshold=200000000
-ops_higher_threshold=800000000
+ops_higher_threshold=500000000
 workloads=(
 	load
 )
