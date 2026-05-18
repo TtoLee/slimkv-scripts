@@ -1,14 +1,18 @@
 #!/bin/bash
-source ~/tebis/settings.sh
-
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-TEBIS_DIR=${TEBIS_DIR:-${SCRIPT_DIR}}
+if [[ -f "${SCRIPT_DIR}/settings.sh" ]]; then
+    source "${SCRIPT_DIR}/settings.sh"
+else
+    source ~/tebis/settings.sh
+fi
+
+TEBIS_DIR=${TEBIS_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}
 BUILD_TARGET=${BUILD_TARGET:-tebis_server}
 BUILD_JOBS=${BUILD_JOBS:-2}
 
 cmake_args=("$@")
 if [[ ${#cmake_args[@]} -eq 0 ]]; then
-    cmake_args=(-DTEBIS_FORMAT=ON -DSPACE_OCCUPATION=OFF -DMICROBENCHMARK=OFF -DRUN_IWYU=OFF -DFETCHCONTENT_UPDATES_DISCONNECTED=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON)
+    cmake_args=(-DTEBIS_FORMAT=ON -DSPACE_OCCUPATION=OFF -DMICROBENCHMARK=OFF -DRUN_IWYU=OFF -DCOLD_LOG_SEPARATION=OFF -DHIGH_AMPLIFICATION_AWARE=OFF -DFETCHCONTENT_UPDATES_DISCONNECTED=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON)
 fi
 build_target_quoted=$(printf '%q' "${BUILD_TARGET}")
 build_jobs_quoted=$(printf '%q' "${BUILD_JOBS}")
