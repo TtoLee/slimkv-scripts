@@ -7,16 +7,23 @@ project_dir="/home/lijinming/tebis"
 basic_script_dir="/home/lijinming/tebis/ycsb_log/scripts"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-gc_method=none
-backup_methods=(
-	offline_coding
+backup_method="offline_coding"
+regions_file="regions_file_cross"
+gc_methods=(
+	none
+	normal
+	sync
+)
+cmake_args=(
+	-DHIGH_AMPLIFICATION_AWARE=ON
+	-DCOLD_LOG_SEPARATION=ON
 )
 load_times=100000000
-run_times=800000000
+run_times=2000000000
 ops_lower_threshold=200000000
-ops_higher_threshold=500000000
+ops_higher_threshold=1500000000
 workloads=(
-	load
+	a
 )
 server_threads=4
 client_threads=16
@@ -60,27 +67,7 @@ fi
 client_logs_dir="${results_dir}/client_logs"
 mkdir -p "${client_logs_dir}"
 throughput_file="${results_dir}/throughput.tsv"
-printf "workload\tbackup_method\tthroughput_kops\tops_file\n" > "${throughput_file}"
-
-resolve_backup_config() {
-	local backup_label=$1
-
-	case "${backup_label}" in
-	elect)
-		echo "elect regions_file_elect"
-		;;
-	replication)
-		echo "online_coding regions_file_replica"
-		;;
-	offline_coding)
-		echo "offline_coding regions_file_cross"
-		;;
-	*)
-		echo "Unsupported backup method label: ${backup_label}" >&2
-		exit 1
-		;;
-	esac
-}
+printf "workload\tbackup_method\tgc_method\tthroughput_kops\tops_file\n" > "${throughput_file}"
 
 compute_kops_from_ops_file() {
 	local ops_file=$1
@@ -116,20 +103,28 @@ compute_kops_from_ops_file() {
 	' "${ops_file}"
 }
 
-echo "Running exp1b (single run per workload/backup), backups=${backup_methods[*]}, workloads=${workloads[*]}"
+sync_and_build_all_nodes() {
+	echo "Syncing source and building locally/remotely via ./scp.sh ${cmake_args[*]} ..." >&2
+	(
+		cd "${project_dir}"
+		./scp.sh "${cmake_args[@]}"
+	)
+}
+
+sync_and_build_all_nodes
+
+echo "Running exp6 gc throughput (backup=${backup_method}), gc_methods=${gc_methods[*]}, workloads=${workloads[*]}"
 
 for workload in "${workloads[@]}"; do
-	for backup_label in "${backup_methods[@]}"; do
-		echo -e "\n*********Running exp1b workload=${workload}, backup=${backup_label}*********"
+	for gc_method in "${gc_methods[@]}"; do
+		echo -e "\n*********Running exp6_gc_thpt workload=${workload}, backup=${backup_method}, gc=${gc_method}*********"
 
-		read -r backup_method regions_file <<< "$(resolve_backup_config "${backup_label}")"
-
-		run_tag="${date_time}"
-		output_base="${results_rel}/client_logs/${nickname}_${backup_label}_${workload}_thread_${server_threads}_${client_threads}"
+		run_tag="${date_time}_${gc_method}"
+		output_base="${results_rel}/client_logs/${nickname}_${backup_method}_${gc_method}_${workload}_thread_${server_threads}_${client_threads}"
 		output_path="${project_dir}/${output_base}_${run_tag}"
-		server_log_path="/tmp/lijinming_tebis_server_${backup_label}_${workload}_${run_tag}.log"
+		server_log_path="/tmp/lijinming_tebis_server_${backup_method}_${gc_method}_${workload}_${run_tag}.log"
 
-		echo "Running workload=${workload}, method=${backup_label}" >&2
+		echo "Running workload=${workload}, backup=${backup_method}, gc=${gc_method}" >&2
 
 		run_cmd=(
 			"${basic_script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}"
@@ -148,49 +143,44 @@ for workload in "${workloads[@]}"; do
 		}
 
 		echo "Throughput: ${kops} kops/sec"
-		printf "%s\t%s\t%s\t%s\n" "${workload}" "${backup_label}" "${kops}" "${ops_file}" >> "${throughput_file}"
+		printf "%s\t%s\t%s\t%s\t%s\n" "${workload}" "${backup_method}" "${gc_method}" "${kops}" "${ops_file}" >> "${throughput_file}"
 
-		sample_key="${backup_label}_${workload}"
+		sample_key="${gc_method}_${workload}"
 		sample_run_dirs["${sample_key}"]="${output_path}"
 
 		sleep 10
 	done
 done
 
-if [[ ${#backup_methods[@]} -lt 2 ]]; then
-	echo "Skip plotting: need at least two backup methods, got ${#backup_methods[@]}" >&2
+if [[ ${#gc_methods[@]} -lt 2 ]]; then
+	echo "Skip plotting: need at least two gc methods, got ${#gc_methods[@]}" >&2
 	exit 0
 fi
 
-plot_label1="${backup_methods[0]}"
-plot_label2="${backup_methods[1]}"
-plot_label3="${backup_methods[2]}"
-
 for workload in "${workloads[@]}"; do
-	plot_output="${results_dir}/run_${workload}_throughput.pdf"
-	echo "Plotting throughput curve for workload=${workload} (${backup_methods[*]})"
+	gc_label_slug=$(IFS=_; echo "${gc_methods[*]}")
+	plot_output="${results_dir}/run_${workload}_throughput_${backup_method}_gc_${gc_label_slug}.pdf"
+	echo "Plotting throughput curve for workload=${workload} (${gc_methods[*]})"
 	plot_cmd=(
 		python3 "${basic_script_dir}/plot_ops_triple.py"
 		--window 5
-		--label1 "${plot_label1}"
-		--label2 "${plot_label2}"
-		--label3 "${plot_label3}"
 		--ops-lower-threshold "${ops_lower_threshold}"
 		--ops-higher-threshold "${ops_higher_threshold}"
 		--output "${plot_output}"
 	)
 
-	for index in "${!backup_methods[@]}"; do
-		backup_label="${backup_methods[${index}]}"
-		sample_key="${backup_label}_${workload}"
+	for index in "${!gc_methods[@]}"; do
+		gc_method="${gc_methods[${index}]}"
+		sample_key="${gc_method}_${workload}"
 		dirs_csv="${sample_run_dirs[${sample_key}]:-}"
 
 		if [[ -z "${dirs_csv}" ]]; then
-			echo "Skip plotting workload=${workload}: missing run directory for backup=${backup_label}." >&2
+			echo "Skip plotting workload=${workload}: missing run directory for gc=${gc_method}." >&2
 			continue 2
 		fi
 
 		series_num=$((index + 1))
+		plot_cmd+=("--label${series_num}" "${gc_method}")
 
 		IFS=';' read -r -a dirs <<< "${dirs_csv}"
 		for d in "${dirs[@]}"; do
@@ -204,5 +194,5 @@ for workload in "${workloads[@]}"; do
 	"${plot_cmd[@]}"
 done
 
-echo "exp1b finished. Results: ${results_dir}"
+echo "exp6 gc throughput finished. Results: ${results_dir}"
 echo "Saved throughput summary: ${throughput_file}"

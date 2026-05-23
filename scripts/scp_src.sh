@@ -1,12 +1,8 @@
 #!/bin/bash
+source ~/tebis/settings.sh
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [[ -f "${SCRIPT_DIR}/settings.sh" ]]; then
-    source "${SCRIPT_DIR}/settings.sh"
-else
-    source ~/tebis/settings.sh
-fi
 
-TEBIS_DIR=${TEBIS_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}
+TEBIS_DIR=${TEBIS_DIR:-${SCRIPT_DIR}}
 BUILD_TARGET=${BUILD_TARGET:-tebis_server}
 BUILD_JOBS=${BUILD_JOBS:-2}
 

@@ -1,14 +1,10 @@
 #!/bin/bash
 set -e
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [[ -f "${SCRIPT_DIR}/settings.sh" ]]; then
-    source "${SCRIPT_DIR}/settings.sh"
-else
-    source ~/tebis/settings.sh
-fi
+source ~/tebis/settings.sh
 
-TEBIS_DIR=${TEBIS_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TEBIS_DIR=${TEBIS_DIR:-${SCRIPT_DIR}}
 BUILD_TARGET=${BUILD_TARGET:-tebis_server}
 BUILD_JOBS=${BUILD_JOBS:-2}
 
@@ -24,4 +20,4 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-BUILD_TARGET="${BUILD_TARGET}" BUILD_JOBS="${BUILD_JOBS}" bash "${SCRIPT_DIR}/scp_src.sh" "${cmake_args[@]}"
+BUILD_TARGET="${BUILD_TARGET}" BUILD_JOBS="${BUILD_JOBS}" bash "${TEBIS_DIR}/scp_src.sh" "${cmake_args[@]}"

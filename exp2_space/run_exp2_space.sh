@@ -6,7 +6,6 @@ nickname=""
 project_dir="/home/lijinming/tebis"
 basic_script_dir="${project_dir}/ycsb_log/scripts"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-time_count_source="${project_dir}/time_counter/time_count.h"
 
 epoch=5
 gc_method=none
@@ -23,6 +22,9 @@ workloads=(
 	load
     a
 )
+exp2_build_cmake_args=(
+	-DSPACE_OCCUPATION=ON
+)
 server_threads=4
 client_threads=16
 date_time=$(date +%Y%m%d_%H%M%S)
@@ -33,7 +35,6 @@ servers_may_be_running=0
 results_dir=""
 summary_file=""
 host_file=""
-space_occupation_original_state=""
 space_occupation_build_enabled=0
 
 hosts=(
@@ -109,69 +110,10 @@ stop_servers() {
 	done
 }
 
-read_space_occupation_macro_state() {
-	if [[ ! -f "${time_count_source}" ]]; then
-		echo "time_count.c not found: ${time_count_source}" >&2
-		return 1
-	fi
-
-	if grep -qE '^[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-		echo "enabled"
-		return 0
-	fi
-
-	if grep -qE '^[[:space:]]*//[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-		echo "disabled"
-		return 0
-	fi
-
-	echo "SPACE_OCCUPATION macro not found in ${time_count_source}" >&2
-	return 1
-}
-
-set_space_occupation_macro_state() {
-	local desired_state=$1
-
-	case "${desired_state}" in
-	enabled)
-		if grep -qE '^[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-			grep -E '^[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}" >&2
-			return 0
-		fi
-		if ! grep -qE '^[[:space:]]*//[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-			echo "Cannot enable SPACE_OCCUPATION: commented macro not found in ${time_count_source}" >&2
-			return 1
-		fi
-		sed -i -E \
-			'0,/^[[:space:]]*\/\/[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)/s//#define SPACE_OCCUPATION/' \
-			"${time_count_source}"
-		;;
-	disabled)
-		if grep -qE '^[[:space:]]*//[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-			grep -E '^[[:space:]]*//[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}" >&2
-			return 0
-		fi
-		if ! grep -qE '^[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}"; then
-			echo "Cannot disable SPACE_OCCUPATION: enabled macro not found in ${time_count_source}" >&2
-			return 1
-		fi
-		sed -i -E \
-			'0,/^[[:space:]]*#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)/s//\/\/#define SPACE_OCCUPATION/' \
-			"${time_count_source}"
-		;;
-	*)
-		echo "Unsupported SPACE_OCCUPATION state: ${desired_state}" >&2
-		return 1
-		;;
-	esac
-
-	grep -E '^[[:space:]]*(//[[:space:]]*)?#define[[:space:]]+SPACE_OCCUPATION([[:space:]]|$)' "${time_count_source}" >&2
-}
-
 sync_and_build_all_nodes() {
 	local cmake_args=("$@")
 
-	echo "Syncing source and building locally/remotely via ./scp.sh ..." >&2
+	echo "Syncing source and building locally/remotely via ./scp.sh ${cmake_args[*]} ..." >&2
 	(
 		cd "${project_dir}"
 		./scp.sh "${cmake_args[@]}"
@@ -179,17 +121,17 @@ sync_and_build_all_nodes() {
 }
 
 enable_space_occupation_for_experiment() {
-	echo "Building with SPACE_OCCUPATION and syncing..." >&2
-	sync_and_build_all_nodes -DSPACE_OCCUPATION=ON
+	echo "Building with exp2_space cmake args: ${exp2_build_cmake_args[*]}" >&2
+	sync_and_build_all_nodes "${exp2_build_cmake_args[@]}"
 	space_occupation_build_enabled=1
 }
 
-restore_space_occupation_macro() {
+restore_default_build() {
 	if [[ ${space_occupation_build_enabled} -eq 0 ]]; then
 		return 0
 	fi
 
-	echo "Rebuilding without SPACE_OCCUPATION and syncing..." >&2
+	echo "Rebuilding with default scp.sh flags after exp2_space..." >&2
 	sync_and_build_all_nodes
 	space_occupation_build_enabled=0
 }
@@ -203,7 +145,7 @@ cleanup() {
 		servers_may_be_running=0
 	fi
 
-	if ! restore_space_occupation_macro; then
+	if ! restore_default_build; then
 		cleanup_failed=1
 	fi
 

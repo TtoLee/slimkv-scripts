@@ -13,15 +13,17 @@ backup_method="offline_coding"
 regions_file="regions_file_cross"
 gc_method="sync"
 valid_segments_threshold_values=(
+	0
 	1
+	2
+	3
 )
 high_amplification_power_values=(
-	0.2
+	0.4
 )
 exp5_build_cmake_args=(
 	-DHIGH_AMPLIFICATION_AWARE=ON
 	-DSPACE_OCCUPATION=ON
-	-DCOLD_LOG_SEPARATION=ON
 )
 workloads=(
 	a
