@@ -19,7 +19,7 @@ workloads=(
 	load
 )
 server_threads=4
-client_threads=16
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 
 results_dir=""

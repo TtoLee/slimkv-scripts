@@ -18,7 +18,7 @@ HOSTS=(
 	10.118.0.32
 )
 ZOOKEEPER_HOST=10.118.0.28
-CLIENT_HOST=10.118.0.30
+CLIENT_HOST=10.118.0.227
 ZOOKEEPER_PORT=2181
 ZOOKEEPER_ENDPOINT=${ZOOKEEPER_HOST}:${ZOOKEEPER_PORT}
 
@@ -30,7 +30,7 @@ custom_client_output=0
 server_log_path=/tmp/lijinming_tebis_server_${date_time}.log
 execution_plan_path=/tmp/lijinming_execution_plan.txt
 server_threads=4
-client_threads=16
+client_threads=32
 cgroup_name=slimkv
 cgroup_memory_limit_gb=32
 remote_cgroup_launcher=/tmp/tebis_cgroup_launcher.sh
@@ -183,7 +183,7 @@ start_zookeeper() {
 start_servers() {
     local server_cmd
     local cgroup_memory_limit_bytes
-    server_cmd="numactl --physcpubind=0-47 --membind=0 ./tebis_server/tebis_server -b ${backup_method} -g ${gc_method} -d /mnt/solidigmssd/slimdata -z ${ZOOKEEPER_ENDPOINT} -r 10.0.0 -p 16 -c $((server_threads + 1)) -t 24 -n mlx5_0"
+    server_cmd="numactl --physcpubind=0-47 --membind=0 ./tebis_server/tebis_server -b ${backup_method} -g ${gc_method} -d /mnt/solidigmssd/slimdata -z ${ZOOKEEPER_ENDPOINT} -r 10.0.0 -p 16 -c $((server_threads + 1)) -t 128 -n mlx5_0"
     cgroup_memory_limit_bytes=$((cgroup_memory_limit_gb * 1024 * 1024 * 1024))
 
     echo "Starting tebis servers on hosts: ${HOSTS[*]}"

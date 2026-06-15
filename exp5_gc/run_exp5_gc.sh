@@ -13,7 +13,10 @@ backup_method="offline_coding"
 regions_file="regions_file_cross"
 gc_method="sync"
 valid_segments_threshold_values=(
+	0
 	1
+	2
+	3
 )
 high_amplification_power_values=(
 	0.2
@@ -28,9 +31,9 @@ workloads=(
 )
 
 load_times=100000000
-run_times=1000000000
-ops_lower_threshold=000000000
-ops_higher_threshold=1500000000
+run_times=1500000000
+ops_lower_threshold=200000000
+ops_higher_threshold=2000000000
 server_threads=4
 client_threads=16
 date_time=$(date +%Y%m%d_%H%M%S)
@@ -58,24 +61,16 @@ hosts=(
 	10.118.0.32
 )
 
-WRITTEN_STATUS=""
-WRITTEN_TOTAL_BYTES=0
-WRITTEN_TOTAL_GIB="0.00"
-WRITTEN_PER_HOST_BYTES=""
-WRITTEN_PER_HOST_GIB=""
-
 SPACE_STATUS=""
 SPACE_TOTAL_USED_BYTES=0
 SPACE_TOTAL_USED_GIB="0.00"
 SPACE_PER_HOST_USED_BYTES=""
 SPACE_PER_HOST_USED_GIB=""
-
-declare -A LAST_HOST_WRITTEN_STATUS=()
-declare -A LAST_HOST_WRITTEN_TS=()
-declare -A LAST_HOST_WRITTEN_BYTES=()
-declare -A LAST_HOST_WRITTEN_GIB=()
-declare -A PREV_HOST_WRITTEN_BYTES=()
-declare -A PREV_HOST_WRITTEN_GIB=()
+DISK_TOTAL_WRITE_BYTES=""
+DISK_TOTAL_WRITE_GIB=""
+DISK_PER_HOST_WRITE_BYTES=""
+DISK_PER_HOST_WRITE_GIB=""
+DISK_PER_HOST_WRITE_PIDS=""
 
 declare -A LAST_HOST_SPACE_STATUS=()
 declare -A LAST_HOST_SPACE_TS=()
@@ -83,6 +78,9 @@ declare -A LAST_HOST_SPACE_USED_BYTES=()
 declare -A LAST_HOST_SPACE_USED_GIB=()
 declare -A PREV_HOST_SPACE_USED_BYTES=()
 declare -A PREV_HOST_SPACE_USED_GIB=()
+declare -A LAST_HOST_DISK_WRITE_PIDS=()
+declare -A LAST_HOST_DISK_WRITE_BYTES=()
+declare -A LAST_HOST_DISK_WRITE_GIB=()
 
 usage() {
 	echo "Usage: $0 -n nickname [-e epoch]"
@@ -331,138 +329,98 @@ filter_ops_file() {
 	mv "${tmp_file}" "${ops_file}"
 }
 
-extract_host_written_volume() {
+extract_host_disk_write_usage() {
 	local host=$1
-	local remote_log=$2
-	local remote_tail
+	local remote_rows
+	local pid
+	local bytes
+	local pids=""
+	local total_bytes=0
+	local total_gib
+	local count=0
 
-	remote_tail=$(ssh "${host}" "
-		if [ ! -e '${remote_log}' ]; then
-			exit 3
+	remote_rows=$(ssh "${host}" "
+		pids=\$(pidof tebis_server 2>/dev/null || true)
+		if [ -z \"\${pids}\" ]; then
+			pids=\$(pgrep -f 'tebis_server/tebis_server -b ${backup_method}' 2>/dev/null || true)
 		fi
-		if [ ! -r '${remote_log}' ]; then
-			exit 4
-		fi
-		matches=\$(grep -F '[GC overhead]' '${remote_log}' | grep -F 'written data during reinsert' || true)
-		if [ -z \"\${matches}\" ]; then
+		if [ -z \"\${pids}\" ]; then
 			exit 2
 		fi
-		printf '%s\n' \"\${matches}\" | tail -n 1
+		for pid in \${pids}; do
+			sudo cat \"/proc/\${pid}/io\" 2>/dev/null | awk -v pid=\"\${pid}\" '\$1 == \"write_bytes:\" { print pid \"\\t\" \$2 }'
+		done
 	") || return $?
 
-	awk '
-	/\[GC overhead\].*written data during reinsert/ {
-		ts = $1
-		bytes = $0
-		gib = $0
+	if [[ -z "${remote_rows}" ]]; then
+		return 2
+	fi
 
-		sub(/^.*written data during reinsert: /, "", bytes)
-		sub(/ B,.*$/, "", bytes)
-		sub(/^.*written data during reinsert: [0-9]+ B,[[:space:]]*/, "", gib)
-		sub(/[[:space:]]*GiB.*$/, "", gib)
+	while IFS=$'\t' read -r pid bytes; do
+		if ! [[ "${pid}" =~ ^[0-9]+$ && "${bytes}" =~ ^[0-9]+$ ]]; then
+			continue
+		fi
+		pids="${pids}${pids:+,}${pid}"
+		total_bytes=$((total_bytes + 10#${bytes}))
+		count=$((count + 1))
+	done <<< "${remote_rows}"
 
-		if (bytes ~ /^[0-9]+$/ && gib ~ /^[0-9]+(\.[0-9]+)?$/) {
-			last_ts = ts
-			last_bytes = bytes
-			last_gib = gib
-			cnt++
-		}
-	}
-	END {
-		if (cnt == 0) exit 2
-		printf "OK\t%s\t%s\t%s\n", last_ts, last_bytes, last_gib
-	}
-	' <<< "${remote_tail}"
+	if [[ ${count} -eq 0 ]]; then
+		return 2
+	fi
+
+	total_gib=$(awk -v bytes="${total_bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+	printf "%s\t%s\t%s\n" "${pids}" "${total_bytes}" "${total_gib}"
 }
 
-collect_written_volume() {
-	local remote_log=$1
-	local verbose_fail=${2:-1}
+collect_disk_write_usage() {
 	local host
 	local host_line
-	local row_status
-	local last_ts
-	local last_bytes
-	local last_gib
-	local prev_bytes
-	local prev_gib
-	local host_stable
-	local all_hosts_stable=1
-	local rc
+	local pids
+	local bytes
+	local gib
 	local total_bytes=0
-	local total_gib="0.00"
 	local per_host_bytes=""
 	local per_host_gib=""
-	local -A next_status=()
-	local -A next_ts=()
-	local -A next_bytes=()
-	local -A next_gib=()
-	local -A next_prev_bytes=()
-	local -A next_prev_gib=()
+	local per_host_pids=""
+	local rc
+
+	DISK_TOTAL_WRITE_BYTES=""
+	DISK_TOTAL_WRITE_GIB=""
+	DISK_PER_HOST_WRITE_BYTES=""
+	DISK_PER_HOST_WRITE_GIB=""
+	DISK_PER_HOST_WRITE_PIDS=""
 
 	for host in "${hosts[@]}"; do
-		if host_line=$(extract_host_written_volume "${host}" "${remote_log}"); then
+		if host_line=$(extract_host_disk_write_usage "${host}"); then
 			:
 		else
 			rc=$?
-			if [[ ${verbose_fail} -eq 1 ]]; then
-				if [[ ${rc} -eq 3 ]]; then
-					echo "Remote log not found on host=${host}: ${remote_log}" >&2
-				elif [[ ${rc} -eq 4 ]]; then
-					echo "Remote log exists but is not readable on host=${host}: ${remote_log}" >&2
-				elif [[ ${rc} -eq 2 ]]; then
-					echo "No parsable GC overhead reinsert GiB lines in remote log on host=${host}: ${remote_log}" >&2
-				else
-					echo "Failed to parse GC overhead on host=${host}: ${remote_log} (rc=${rc})" >&2
-				fi
-				ssh "${host}" "echo '--- tail -n 5 ${remote_log} ---' >&2; tail -n 5 '${remote_log}' 2>/dev/null >&2 || true; echo '--- grep GC overhead tail -n 5 ---' >&2; grep -F '[GC overhead]' '${remote_log}' 2>/dev/null | tail -n 5 >&2 || true" || true
+			if [[ ${rc} -eq 2 ]]; then
+				echo "No running tebis_server write_bytes found on host=${host}; collect before killing servers." >&2
+			else
+				echo "Failed to read /proc/<tebis_server-pid>/io on host=${host} (rc=${rc})." >&2
 			fi
 			return 1
 		fi
 
-		IFS=$'\t' read -r row_status last_ts last_bytes last_gib <<< "${host_line}"
-		prev_bytes=${LAST_HOST_WRITTEN_BYTES[${host}]:-NA}
-		prev_gib=${LAST_HOST_WRITTEN_GIB[${host}]:-NA}
+		IFS=$'\t' read -r pids bytes gib <<< "${host_line}"
 
-		host_stable="UNSTABLE"
-		if [[ "${row_status}" == "OK" && "${last_bytes}" == "${prev_bytes}" ]]; then
-			host_stable="STABLE"
-		else
-			all_hosts_stable=0
-		fi
+		LAST_HOST_DISK_WRITE_PIDS["${host}"]=${pids}
+		LAST_HOST_DISK_WRITE_BYTES["${host}"]=${bytes}
+		LAST_HOST_DISK_WRITE_GIB["${host}"]=${gib}
 
-		next_status["${host}"]=${host_stable}
-		next_ts["${host}"]=${last_ts}
-		next_bytes["${host}"]=${last_bytes}
-		next_gib["${host}"]=${last_gib}
-		next_prev_bytes["${host}"]=${prev_bytes}
-		next_prev_gib["${host}"]=${prev_gib}
-
-		total_bytes=$((total_bytes + 10#${last_bytes}))
-		total_gib=$(awk -v acc="${total_gib}" -v val="${last_gib}" 'BEGIN { printf "%.2f", acc + val }')
-		per_host_bytes="${per_host_bytes}${per_host_bytes:+,}${host}:${last_bytes}"
-		per_host_gib="${per_host_gib}${per_host_gib:+,}${host}:${last_gib}"
+		total_bytes=$((total_bytes + 10#${bytes}))
+		per_host_bytes="${per_host_bytes}${per_host_bytes:+,}${host}:${bytes}"
+		per_host_gib="${per_host_gib}${per_host_gib:+,}${host}:${gib}"
+		per_host_pids="${per_host_pids}${per_host_pids:+,}${host}:${pids}"
 	done
 
-	for host in "${hosts[@]}"; do
-		LAST_HOST_WRITTEN_STATUS["${host}"]=${next_status[${host}]}
-		LAST_HOST_WRITTEN_TS["${host}"]=${next_ts[${host}]}
-		LAST_HOST_WRITTEN_BYTES["${host}"]=${next_bytes[${host}]}
-		LAST_HOST_WRITTEN_GIB["${host}"]=${next_gib[${host}]}
-		PREV_HOST_WRITTEN_BYTES["${host}"]=${next_prev_bytes[${host}]}
-		PREV_HOST_WRITTEN_GIB["${host}"]=${next_prev_gib[${host}]}
-	done
-
-	WRITTEN_TOTAL_BYTES=${total_bytes}
-	WRITTEN_TOTAL_GIB=${total_gib}
-	WRITTEN_PER_HOST_BYTES=${per_host_bytes}
-	WRITTEN_PER_HOST_GIB=${per_host_gib}
-
-	if [[ ${all_hosts_stable} -eq 1 ]]; then
-		WRITTEN_STATUS="STABLE"
-	else
-		WRITTEN_STATUS="UNSTABLE"
-	fi
+	DISK_TOTAL_WRITE_BYTES=${total_bytes}
+	DISK_TOTAL_WRITE_GIB=$(awk -v bytes="${total_bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+	DISK_PER_HOST_WRITE_BYTES=${per_host_bytes}
+	DISK_PER_HOST_WRITE_GIB=${per_host_gib}
+	DISK_PER_HOST_WRITE_PIDS=${per_host_pids}
 }
 
 extract_host_space_usage() {
@@ -603,25 +561,12 @@ collect_space_usage() {
 	fi
 }
 
-reset_metric_snapshots() {
-	WRITTEN_STATUS="NOT_READY"
-	WRITTEN_TOTAL_BYTES=0
-	WRITTEN_TOTAL_GIB="0.00"
-	WRITTEN_PER_HOST_BYTES=""
-	WRITTEN_PER_HOST_GIB=""
-
+reset_space_snapshots() {
 	SPACE_STATUS="NOT_READY"
 	SPACE_TOTAL_USED_BYTES=0
 	SPACE_TOTAL_USED_GIB="0.00"
 	SPACE_PER_HOST_USED_BYTES=""
 	SPACE_PER_HOST_USED_GIB=""
-
-	LAST_HOST_WRITTEN_STATUS=()
-	LAST_HOST_WRITTEN_TS=()
-	LAST_HOST_WRITTEN_BYTES=()
-	LAST_HOST_WRITTEN_GIB=()
-	PREV_HOST_WRITTEN_BYTES=()
-	PREV_HOST_WRITTEN_GIB=()
 
 	LAST_HOST_SPACE_STATUS=()
 	LAST_HOST_SPACE_TS=()
@@ -631,42 +576,33 @@ reset_metric_snapshots() {
 	PREV_HOST_SPACE_USED_GIB=()
 }
 
-wait_until_stable_metrics() {
+wait_until_stable_space_usage() {
 	local remote_log=$1
 	local start_ts
 	local now_ts
 	local elapsed_sec
 	local attempt=0
-	local written_ready=0
-	local space_ready=0
 
-	reset_metric_snapshots
+	reset_space_snapshots
 	start_ts=$(date +%s)
 
 	while true; do
 		attempt=$((attempt + 1))
-		written_ready=0
-		space_ready=0
 
-		if collect_written_volume "${remote_log}" 0; then
-			written_ready=1
-		fi
 		if collect_space_usage "${remote_log}" 0; then
-			space_ready=1
+			if [[ "${SPACE_STATUS}" == "STABLE" ]]; then
+				echo "Space occupation stable: total_used_gib=${SPACE_TOTAL_USED_GIB}, total_used_bytes=${SPACE_TOTAL_USED_BYTES}" >&2
+				return 0
+			fi
+			echo "Space occupation still changing (attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
+		else
+			echo "Space occupation not ready yet (attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
 		fi
-
-		if [[ ${written_ready} -eq 1 && ${space_ready} -eq 1 && "${WRITTEN_STATUS}" == "STABLE" && "${SPACE_STATUS}" == "STABLE" ]]; then
-			echo "Metrics stable: total_written_gib=${WRITTEN_TOTAL_GIB}, total_space_used_gib=${SPACE_TOTAL_USED_GIB}" >&2
-			return 0
-		fi
-
-		echo "Metrics not stable yet (attempt=${attempt}, written=${WRITTEN_STATUS:-NOT_READY}, space=${SPACE_STATUS:-NOT_READY}), wait ${stable_check_interval_sec}s..." >&2
 
 		now_ts=$(date +%s)
 		elapsed_sec=$((now_ts - start_ts))
 		if [[ ${stable_check_timeout_sec} -gt 0 && ${elapsed_sec} -ge ${stable_check_timeout_sec} ]]; then
-			echo "Timed out waiting for exp5 metrics to become stable after ${elapsed_sec}s." >&2
-			collect_written_volume "${remote_log}" 1 || true
+			echo "Timed out waiting for space occupation to become stable after ${elapsed_sec}s." >&2
 			collect_space_usage "${remote_log}" 1 || true
 			return 1
 		fi
@@ -684,14 +620,13 @@ write_host_rows() {
 	local host
 
 	for host in "${hosts[@]}"; do
-		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 			"${valid_segments_threshold}" "${high_amplification_power}" "${workload}" "${backup_label}" "${gc_method}" "${ep}" "${host}" \
-			"${LAST_HOST_WRITTEN_STATUS[${host}]}" "${LAST_HOST_WRITTEN_TS[${host}]}" \
-			"${LAST_HOST_WRITTEN_BYTES[${host}]}" "${LAST_HOST_WRITTEN_GIB[${host}]}" \
-			"${PREV_HOST_WRITTEN_BYTES[${host}]}" "${PREV_HOST_WRITTEN_GIB[${host}]}" \
 			"${LAST_HOST_SPACE_STATUS[${host}]}" "${LAST_HOST_SPACE_TS[${host}]}" \
 			"${LAST_HOST_SPACE_USED_BYTES[${host}]}" "${LAST_HOST_SPACE_USED_GIB[${host}]}" \
 			"${PREV_HOST_SPACE_USED_BYTES[${host}]}" "${PREV_HOST_SPACE_USED_GIB[${host}]}" \
+			"${LAST_HOST_DISK_WRITE_PIDS[${host}]}" "${LAST_HOST_DISK_WRITE_BYTES[${host}]}" \
+			"${LAST_HOST_DISK_WRITE_GIB[${host}]}" \
 			"${remote_log}" \
 			>> "${host_file}"
 	done
@@ -711,8 +646,8 @@ if [[ -z "${default_high_amplification_power}" ]]; then
 fi
 current_high_amplification_power=${default_high_amplification_power}
 
-printf "valid_segments_threshold\thigh_amplification_power\tworkload\tbackup_method\tgc_method\tepoch\twritten_status\tspace_status\twritten_volume_bytes\twritten_volume_gib\tspace_usage_bytes\tspace_usage_gib\tper_host_written_volume_bytes\tper_host_written_volume_gib\tper_host_space_usage_bytes\tper_host_space_usage_gib\tserver_log_path\n" > "${summary_file}"
-printf "valid_segments_threshold\thigh_amplification_power\tworkload\tbackup_method\tgc_method\tepoch\thost\twritten_status\twritten_timestamp\twritten_volume_bytes\twritten_volume_gib\tprev_written_volume_bytes\tprev_written_volume_gib\tspace_status\tspace_timestamp\tspace_usage_bytes\tspace_usage_gib\tprev_space_usage_bytes\tprev_space_usage_gib\tserver_log_path\n" > "${host_file}"
+printf "valid_segments_threshold\thigh_amplification_power\tworkload\tbackup_method\tgc_method\tepoch\tspace_status\tspace_usage_bytes\tspace_usage_gib\tper_host_space_usage_bytes\tper_host_space_usage_gib\ttotal_disk_write_bytes\ttotal_disk_write_gib\tper_host_disk_write_bytes\tper_host_disk_write_gib\tper_host_disk_write_pids\tserver_log_path\n" > "${summary_file}"
+printf "valid_segments_threshold\thigh_amplification_power\tworkload\tbackup_method\tgc_method\tepoch\thost\tspace_status\tspace_timestamp\tspace_usage_bytes\tspace_usage_gib\tprev_space_usage_bytes\tprev_space_usage_gib\tdisk_write_pids\tdisk_write_bytes\tdisk_write_gib\tserver_log_path\n" > "${host_file}"
 
 echo "Running exp5_gc with epoch=${epoch}, backup=${backup_label}, gc=${gc_method}, valid_segments_thresholds=${valid_segments_threshold_values[*]}, high_amplification_powers=${high_amplification_power_values[*]}, workloads=${workloads[*]}"
 
@@ -742,21 +677,22 @@ for high_amplification_power in "${high_amplification_power_values[@]}"; do
 				ops_file="${output_path}/run_${workload}/ops.txt"
 				filter_ops_file "${ops_file}"
 
-				wait_until_stable_metrics "${server_log_path}"
+				wait_until_stable_space_usage "${server_log_path}"
+				collect_disk_write_usage
 
 				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 					"${valid_segments_threshold}" "${high_amplification_power}" "${workload}" "${backup_label}" "${gc_method}" "${ep}" \
-					"${WRITTEN_STATUS}" "${SPACE_STATUS}" \
-					"${WRITTEN_TOTAL_BYTES}" "${WRITTEN_TOTAL_GIB}" \
+					"${SPACE_STATUS}" \
 					"${SPACE_TOTAL_USED_BYTES}" "${SPACE_TOTAL_USED_GIB}" \
-					"${WRITTEN_PER_HOST_BYTES}" "${WRITTEN_PER_HOST_GIB}" \
 					"${SPACE_PER_HOST_USED_BYTES}" "${SPACE_PER_HOST_USED_GIB}" \
+					"${DISK_TOTAL_WRITE_BYTES}" "${DISK_TOTAL_WRITE_GIB}" \
+					"${DISK_PER_HOST_WRITE_BYTES}" "${DISK_PER_HOST_WRITE_GIB}" "${DISK_PER_HOST_WRITE_PIDS}" \
 					"${server_log_path}" \
 					>> "${summary_file}"
 
 				write_host_rows "${valid_segments_threshold}" "${high_amplification_power}" "${workload}" "${ep}" "${server_log_path}"
 
-				echo "Exp5 result: threshold=${valid_segments_threshold}, high_amplification_power=${high_amplification_power}, epoch=${ep}, written_volume_gib=${WRITTEN_TOTAL_GIB}, space_usage_gib=${SPACE_TOTAL_USED_GIB}" >&2
+				echo "Exp5 result: threshold=${valid_segments_threshold}, high_amplification_power=${high_amplification_power}, epoch=${ep}, disk_write_gib=${DISK_TOTAL_WRITE_GIB}, space_usage_gib=${SPACE_TOTAL_USED_GIB}" >&2
 
 				stop_servers
 				servers_may_be_running=0

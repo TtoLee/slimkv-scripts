@@ -18,11 +18,11 @@ workloads=(
 )
 
 load_times=100000000
-run_times=1100000000
+run_times=1500000000
 ops_lower_threshold=200000000
-ops_higher_threshold=900000000
+ops_higher_threshold=1200000000
 server_threads=4
-client_threads=16
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 
 results_dir=""

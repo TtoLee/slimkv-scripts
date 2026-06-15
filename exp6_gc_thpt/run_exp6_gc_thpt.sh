@@ -15,18 +15,16 @@ gc_methods=(
 	sync
 )
 cmake_args=(
-	-DHIGH_AMPLIFICATION_AWARE=ON
-	-DCOLD_LOG_SEPARATION=ON
 )
 load_times=100000000
-run_times=2000000000
+run_times=1600000000
 ops_lower_threshold=200000000
-ops_higher_threshold=1500000000
+ops_higher_threshold=1200000000
 workloads=(
 	a
 )
 server_threads=4
-client_threads=16
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 
 results_dir=""

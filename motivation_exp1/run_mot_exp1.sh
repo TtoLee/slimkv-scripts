@@ -10,7 +10,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 gc_method=none
 backup_methods=(
 	replication
-	elect
+	offline_coding
 )
 load_times=100000000
 run_times=700000000
@@ -20,7 +20,7 @@ workloads=(
 	load
 )
 server_threads=4
-client_threads=16
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 
 results_dir=""

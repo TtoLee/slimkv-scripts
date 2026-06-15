@@ -19,13 +19,9 @@ ops_lower_threshold=200000000
 ops_higher_threshold=500000000
 workloads=(
     load
-    a
-    b
-    c
-    d
     ) 
 server_threads=4
-client_threads=16
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 results_dir=""
 plot_dir=""

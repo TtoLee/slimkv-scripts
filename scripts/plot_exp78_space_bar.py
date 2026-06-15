@@ -24,33 +24,35 @@ mpl.rcParams.update(
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import font_manager
+from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-tebis_color = "#9AC9DB"
-elect_color = "#BB9727"
-slimkv_color = "#C82423"
-ablation_color = "#4E79A7"
-BAR_COLORS = [tebis_color, elect_color, slimkv_color, ablation_color]
+BAR_COLORS = ["#9AC9DB", "#BB9727", "#C82423", "#54B345", "#eddd86"]
 
 DEFAULT_WORKLOADS = ["load", "a"]
 DEFAULT_BACKUPS = ["replication", "elect", "offline_coding"]
-REFERENCE_PANEL_FIGSIZE = (8, 5)
-PANEL_FIGSIZE = (5.3, 5)
+PANEL_FIGSIZE = (4, 5)
 LEGEND_FIGSIZE = (8, 1)
+REFERENCE_PANEL_WIDTH = 8
 GROUP_SPACING = 0.50
 GROUP_CLUSTER_WIDTH = 0.36
 REFERENCE_GROUP_SPACING = 0.50
 REFERENCE_GROUP_COUNT = 5
 REFERENCE_ITEM_COUNT = 3
+FIXED_CLUSTER_ITEM_COUNT = 4
+FIXED_BAR_WIDTH_ITEM_COUNT = 5
 REFERENCE_X_MARGIN_FACTOR = 0.03
-X_MARGIN_FACTOR = 0.12
+LAYOUT_X_MARGIN_FACTOR = 0.12
+X_MARGIN_FACTOR = 0.20
 BASE_SUBPLOT_LEFT = 0.08
 BASE_SUBPLOT_RIGHT = 0.98
+EXPANDED_SUBPLOT_RIGHT = 1.00
 BASE_SUBPLOT_BOTTOM = 0.21
 BASE_SUBPLOT_TOP = 0.965
-NARROW_SUBPLOT_LEFT = 0
-SUBPLOT_LEFT_SHIFT = 0.03
-Y_AXIS_LABEL_X = -0.48
+NARROW_SUBPLOT_LEFT = 0.30
+SUBPLOT_X_SHIFT = -0.02
+MIN_SUBPLOT_LEFT = 0.02
+Y_AXIS_LABEL_FIGURE_X = 0.12
 ARIAL_FONT_PATH = Path("/usr/local/share/fonts/arial/ARIAL.TTF")
 GLOBAL_FONT_PROPERTIES = None
 if ARIAL_FONT_PATH.exists():
@@ -70,13 +72,24 @@ def compute_group_x_positions(n_groups: int) -> np.ndarray:
     return np.arange(n_groups) * GROUP_SPACING
 
 
-def reference_x_fraction_to_panel(value: float) -> float:
-    return value * REFERENCE_PANEL_FIGSIZE[0] / PANEL_FIGSIZE[0]
-
-
 def compute_bar_width(n_items: int) -> float:
     reference_width = GROUP_CLUSTER_WIDTH / REFERENCE_ITEM_COUNT
+    if n_items <= FIXED_BAR_WIDTH_ITEM_COUNT:
+        return reference_width
     return min(reference_width, GROUP_CLUSTER_WIDTH / n_items)
+
+
+def compute_bar_offset(index: int, n_items: int, width: float) -> float:
+    return (index - (n_items - 1) / 2) * width
+
+
+def compute_cluster_bounds(n_items: int, width: float) -> Tuple[float, float]:
+    if n_items <= FIXED_CLUSTER_ITEM_COUNT:
+        fixed_cluster_width = FIXED_CLUSTER_ITEM_COUNT * width
+        return -fixed_cluster_width / 2.0, fixed_cluster_width / 2.0
+
+    cluster_width = max(n_items * width, GROUP_CLUSTER_WIDTH)
+    return -cluster_width / 2.0, cluster_width / 2.0
 
 
 def compute_grouped_x_range(
@@ -84,30 +97,58 @@ def compute_grouped_x_range(
     n_items: int,
     width: float,
     group_spacing: float = GROUP_SPACING,
-    x_margin_factor: float = X_MARGIN_FACTOR,
+    x_margin_factor: float = LAYOUT_X_MARGIN_FACTOR,
+    reserve_fixed_bar_width: bool = False,
 ) -> float:
-    cluster_half_width = max(
-        n_items * width / 2.0,
-        GROUP_CLUSTER_WIDTH / 2.0,
+    left, right = compute_grouped_x_limits(
+        n_groups,
+        n_items,
+        width,
+        group_spacing,
+        x_margin_factor,
+        reserve_fixed_bar_width,
     )
-    left = -cluster_half_width
-    right = (n_groups - 1) * group_spacing + cluster_half_width
-    pad = (right - left) * x_margin_factor
-    return (right + pad) - (left - pad)
+    return right - left
+
+
+def compute_grouped_x_limits(
+    n_groups: int,
+    n_items: int,
+    width: float,
+    group_spacing: float = GROUP_SPACING,
+    x_margin_factor: float = X_MARGIN_FACTOR,
+    reserve_fixed_bar_width: bool = False,
+) -> Tuple[float, float]:
+    effective_items = (
+        FIXED_BAR_WIDTH_ITEM_COUNT
+        if reserve_fixed_bar_width and n_items <= FIXED_BAR_WIDTH_ITEM_COUNT
+        else n_items
+    )
+    cluster_left, cluster_right = compute_cluster_bounds(effective_items, width)
+    left = cluster_left
+    right = (n_groups - 1) * group_spacing + cluster_right
+
+    if reserve_fixed_bar_width and n_items <= FIXED_BAR_WIDTH_ITEM_COUNT:
+        pad_left, pad_right = compute_cluster_bounds(FIXED_CLUSTER_ITEM_COUNT, width)
+        pad_right = (n_groups - 1) * group_spacing + pad_right
+        pad = (pad_right - pad_left) * x_margin_factor
+    else:
+        pad = (right - left) * x_margin_factor
+    return left - pad, right + pad
 
 
 def set_grouped_x_limits(ax, n_groups: int, n_items: int, width: float) -> None:
-    cluster_half_width = max(
-        n_items * width / 2.0,
-        GROUP_CLUSTER_WIDTH / 2.0,
+    left, right = compute_grouped_x_limits(
+        n_groups, n_items, width, reserve_fixed_bar_width=True
     )
-    left = -cluster_half_width
-    right = (n_groups - 1) * GROUP_SPACING + cluster_half_width
-    pad = (right - left) * X_MARGIN_FACTOR
-    ax.set_xlim(left - pad, right + pad)
+    ax.set_xlim(left, right)
 
 
-def adjust_grouped_subplot(fig, n_groups: int, n_items: int, width: float) -> None:
+def adjust_grouped_subplot(
+    fig, n_groups: int, n_items: int, width: float
+) -> Tuple[float, float]:
+    uses_fixed_width_frame = n_items <= FIXED_BAR_WIDTH_ITEM_COUNT
+    subplot_right = EXPANDED_SUBPLOT_RIGHT if uses_fixed_width_frame else BASE_SUBPLOT_RIGHT
     reference_range = compute_grouped_x_range(
         REFERENCE_GROUP_COUNT,
         REFERENCE_ITEM_COUNT,
@@ -115,24 +156,61 @@ def adjust_grouped_subplot(fig, n_groups: int, n_items: int, width: float) -> No
         REFERENCE_GROUP_SPACING,
         REFERENCE_X_MARGIN_FACTOR,
     )
-    current_range = compute_grouped_x_range(n_groups, n_items, width)
+    layout_range = compute_grouped_x_range(
+        n_groups, n_items, width, reserve_fixed_bar_width=uses_fixed_width_frame
+    )
+    display_range = compute_grouped_x_range(
+        n_groups,
+        n_items,
+        width,
+        x_margin_factor=X_MARGIN_FACTOR,
+        reserve_fixed_bar_width=uses_fixed_width_frame,
+    )
     base_width = BASE_SUBPLOT_RIGHT - BASE_SUBPLOT_LEFT
-    target_width = min(base_width, base_width * current_range / reference_range)
+    layout_width_on_reference_panel = min(
+        base_width, base_width * layout_range / reference_range
+    )
+    layout_target_width = min(
+        base_width,
+        layout_width_on_reference_panel * REFERENCE_PANEL_WIDTH / PANEL_FIGSIZE[0],
+    )
+    target_width = layout_target_width * display_range / layout_range
+    label_reference_width = layout_target_width
 
     if n_groups >= REFERENCE_GROUP_COUNT:
         left = BASE_SUBPLOT_LEFT
     else:
+        anchor_items = (
+            FIXED_CLUSTER_ITEM_COUNT
+            if uses_fixed_width_frame
+            else n_items
+        )
+        anchor_width = compute_bar_width(anchor_items)
+        anchor_range = compute_grouped_x_range(n_groups, anchor_items, anchor_width)
+        anchor_width_on_reference_panel = min(
+            base_width, base_width * anchor_range / reference_range
+        )
+        anchor_target_width = min(
+            base_width,
+            anchor_width_on_reference_panel * REFERENCE_PANEL_WIDTH / PANEL_FIGSIZE[0],
+        )
+        label_reference_width = anchor_target_width
         available_width = BASE_SUBPLOT_RIGHT - NARROW_SUBPLOT_LEFT
-        left = NARROW_SUBPLOT_LEFT + max(available_width - target_width, 0.0) / 2.0
-
-    shifted_left = max(left - SUBPLOT_LEFT_SHIFT, 0.0)
+        left = NARROW_SUBPLOT_LEFT + max(available_width - anchor_target_width, 0.0) / 2.0
+        left_target_width = (
+            anchor_target_width if uses_fixed_width_frame else layout_target_width
+        )
+        left = min(left, BASE_SUBPLOT_RIGHT - left_target_width)
+    left = max(MIN_SUBPLOT_LEFT, left + SUBPLOT_X_SHIFT)
+    target_width = min(target_width, subplot_right - left)
 
     fig.subplots_adjust(
-        left=reference_x_fraction_to_panel(shifted_left),
-        right=reference_x_fraction_to_panel(shifted_left + target_width),
+        left=left,
+        right=left + target_width,
         bottom=BASE_SUBPLOT_BOTTOM,
         top=BASE_SUBPLOT_TOP,
     )
+    return target_width, label_reference_width
 
 
 def apply_output_font(fig):
@@ -307,9 +385,8 @@ def plot_bars(
     value_text_items = []
 
     for i in range(n_items):
-        offset = (i - (n_items - 1) / 2) * width
+        offset = compute_bar_offset(i, n_items, width)
         vals = data[:, i]
-        err_vals = safe_errors[:, i]
 
         bars = ax.bar(
             x + offset,
@@ -321,22 +398,9 @@ def plot_bars(
             linewidth=BAR_EDGE_LINEWIDTH,
         )
 
-        valid_mask = ~np.isnan(vals)
-        ax.errorbar(
-            (x + offset)[valid_mask],
-            vals[valid_mask],
-            yerr=err_vals[valid_mask],
-            fmt="none",
-            ecolor="black",
-            elinewidth=2.0,
-            capsize=6,
-            capthick=2.0,
-            zorder=3,
-        )
-
-        for b_idx, bar in enumerate(bars):
+        for bar in bars:
             h = bar.get_height()
-            label_y = h + err_vals[b_idx] + label_pad
+            label_y = h + label_pad
             max_label_y = max(max_label_y, label_y)
             txt = ax.text(
                 bar.get_x() + bar.get_width() / 2 + value_x_offset,
@@ -354,7 +418,6 @@ def plot_bars(
     set_grouped_x_limits(ax, n_groups, n_items, width)
     ax.set_xlabel(x_axis_label)
     ax.set_ylabel(y_axis_label)
-    ax.yaxis.set_label_coords(Y_AXIS_LABEL_X, 0.42)
     ax.tick_params(
         axis="x",
         bottom=True,
@@ -403,7 +466,14 @@ def plot_bars(
 
     legend_handles, legend_labels = ax.get_legend_handles_labels()
 
-    adjust_grouped_subplot(fig, n_groups, n_items, width)
+    target_width, _ = adjust_grouped_subplot(
+        fig, n_groups, n_items, width
+    )
+    axes_left = ax.get_position().x0
+    y_axis_label_x = 0.0
+    if target_width > 0:
+        y_axis_label_x = (Y_AXIS_LABEL_FIGURE_X - axes_left) / target_width
+    ax.yaxis.set_label_coords(y_axis_label_x, 0.42)
     apply_output_font(fig)
     fig.savefig(output, dpi=300)
     plt.close(fig)
@@ -415,18 +485,51 @@ def plot_bars(
 def save_legend_figure(handles, labels, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     n_items = max(1, len(labels))
-    fig = plt.figure(figsize=LEGEND_FIGSIZE)
-    fig.legend(
-        handles,
-        labels,
-        frameon=False,
-        loc="center",
-        ncol=n_items,
-        fontsize=GLOBAL_FONT_SIZE,
-        handlelength=1.0,
-        columnspacing=0.8,
-        handletextpad=0.4,
-    )
+    n_columns = min(n_items, 2)
+    n_rows = math.ceil(n_items / n_columns)
+    fig_height = LEGEND_FIGSIZE[1] * 1.7
+    fig_width = LEGEND_FIGSIZE[0]
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.set_axis_off()
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+
+    column_x = [0.24] if n_columns == 1 else [0.02, 0.52]
+    row_step = 0.34
+    row_top = 0.50 + row_step * (n_rows - 1) / 2.0
+    row_y = [0.50] if n_rows == 1 else [row_top - i * row_step for i in range(n_rows)]
+    handle_width = (2.0 * GLOBAL_FONT_SIZE / 72.0) / fig_width
+    handle_height = (0.7 * GLOBAL_FONT_SIZE / 72.0) / fig_height
+    text_pad = 0.02
+
+    for index, (handle, label) in enumerate(zip(handles, labels)):
+        row = index // n_columns
+        column = index % n_columns
+        x = column_x[column]
+        y = row_y[row]
+        patch = handle.patches[0] if hasattr(handle, "patches") else handle
+        rect = Rectangle(
+            (x, y - handle_height / 2.0),
+            handle_width,
+            handle_height,
+            facecolor=patch.get_facecolor(),
+            edgecolor=patch.get_edgecolor(),
+            linewidth=patch.get_linewidth(),
+            transform=ax.transAxes,
+            clip_on=False,
+        )
+        ax.add_patch(rect)
+        ax.text(
+            x + handle_width + text_pad,
+            y,
+            label,
+            ha="left",
+            va="center",
+            fontsize=GLOBAL_FONT_SIZE,
+            transform=ax.transAxes,
+        )
+
     apply_output_font(fig)
     fig.savefig(output, dpi=300, pad_inches=0.02)
     plt.close(fig)

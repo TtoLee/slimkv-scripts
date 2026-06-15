@@ -31,6 +31,7 @@ date_time=$(date +%Y%m%d_%H%M%S)
 stable_check_interval_sec=200
 stable_check_timeout_sec=0
 servers_may_be_running=0
+rdma_xmit_counter_path="/sys/class/infiniband/mlx5_0/ports/1/counters/port_rcv_data"
 
 results_dir=""
 summary_file=""
@@ -52,6 +53,19 @@ SPACE_TOTAL_USED_BYTES=""
 SPACE_TOTAL_USED_GIB=""
 SPACE_PER_HOST_USED_BYTES=""
 SPACE_PER_HOST_USED_GIB=""
+DISK_TOTAL_WRITE_BYTES=""
+DISK_TOTAL_WRITE_GIB=""
+DISK_PER_HOST_WRITE_BYTES=""
+DISK_PER_HOST_WRITE_GIB=""
+DISK_PER_HOST_WRITE_PIDS=""
+RDMA_XMIT_TOTAL_UNITS=""
+RDMA_XMIT_TOTAL_BYTES=""
+RDMA_XMIT_TOTAL_GIB=""
+RDMA_XMIT_PER_HOST_START_UNITS=""
+RDMA_XMIT_PER_HOST_END_UNITS=""
+RDMA_XMIT_PER_HOST_DELTA_UNITS=""
+RDMA_XMIT_PER_HOST_BYTES=""
+RDMA_XMIT_PER_HOST_GIB=""
 
 declare -A LAST_HOST_STATUS=()
 declare -A LAST_HOST_TS=()
@@ -59,6 +73,14 @@ declare -A LAST_HOST_USED_BYTES=()
 declare -A LAST_HOST_USED_GIB=()
 declare -A PREV_HOST_USED_BYTES=()
 declare -A PREV_HOST_USED_GIB=()
+declare -A LAST_HOST_DISK_WRITE_PIDS=()
+declare -A LAST_HOST_DISK_WRITE_BYTES=()
+declare -A LAST_HOST_DISK_WRITE_GIB=()
+declare -A LAST_HOST_RDMA_XMIT_START_UNITS=()
+declare -A LAST_HOST_RDMA_XMIT_END_UNITS=()
+declare -A LAST_HOST_RDMA_XMIT_DELTA_UNITS=()
+declare -A LAST_HOST_RDMA_XMIT_BYTES=()
+declare -A LAST_HOST_RDMA_XMIT_GIB=()
 
 usage() {
 	echo "Usage: $0 -n nickname [-e epoch]"
@@ -345,6 +367,215 @@ collect_space_usage() {
 	fi
 }
 
+extract_host_disk_write_usage() {
+	local host=$1
+	local remote_rows
+	local pid
+	local bytes
+	local pids=""
+	local total_bytes=0
+	local total_gib
+	local count=0
+
+	remote_rows=$(ssh "${host}" "
+		pids=\$(pidof tebis_server 2>/dev/null || true)
+		if [ -z \"\${pids}\" ]; then
+			pids=\$(pgrep -f 'tebis_server/tebis_server -b ${backup_method}' 2>/dev/null || true)
+		fi
+		if [ -z \"\${pids}\" ]; then
+			exit 2
+		fi
+		for pid in \${pids}; do
+			sudo cat \"/proc/\${pid}/io\" 2>/dev/null | awk -v pid=\"\${pid}\" '\$1 == \"write_bytes:\" { print pid \"\\t\" \$2 }'
+		done
+	") || return $?
+
+	if [[ -z "${remote_rows}" ]]; then
+		return 2
+	fi
+
+	while IFS=$'\t' read -r pid bytes; do
+		if ! [[ "${pid}" =~ ^[0-9]+$ && "${bytes}" =~ ^[0-9]+$ ]]; then
+			continue
+		fi
+		pids="${pids}${pids:+,}${pid}"
+		total_bytes=$((total_bytes + 10#${bytes}))
+		count=$((count + 1))
+	done <<< "${remote_rows}"
+
+	if [[ ${count} -eq 0 ]]; then
+		return 2
+	fi
+
+	total_gib=$(awk -v bytes="${total_bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+	printf "%s\t%s\t%s\n" "${pids}" "${total_bytes}" "${total_gib}"
+}
+
+collect_disk_write_usage() {
+	local host
+	local host_line
+	local pids
+	local bytes
+	local gib
+	local total_bytes=0
+	local per_host_bytes=""
+	local per_host_gib=""
+	local per_host_pids=""
+	local rc
+
+	DISK_TOTAL_WRITE_BYTES=""
+	DISK_TOTAL_WRITE_GIB=""
+	DISK_PER_HOST_WRITE_BYTES=""
+	DISK_PER_HOST_WRITE_GIB=""
+	DISK_PER_HOST_WRITE_PIDS=""
+
+	for host in "${hosts[@]}"; do
+		if host_line=$(extract_host_disk_write_usage "${host}"); then
+			:
+		else
+			rc=$?
+			if [[ ${rc} -eq 2 ]]; then
+				echo "No running tebis_server write_bytes found on host=${host}; collect before killing servers." >&2
+			else
+				echo "Failed to read /proc/<tebis_server-pid>/io on host=${host} (rc=${rc})." >&2
+			fi
+			return 1
+		fi
+
+		IFS=$'\t' read -r pids bytes gib <<< "${host_line}"
+
+		LAST_HOST_DISK_WRITE_PIDS["${host}"]=${pids}
+		LAST_HOST_DISK_WRITE_BYTES["${host}"]=${bytes}
+		LAST_HOST_DISK_WRITE_GIB["${host}"]=${gib}
+
+		total_bytes=$((total_bytes + 10#${bytes}))
+		per_host_bytes="${per_host_bytes}${per_host_bytes:+,}${host}:${bytes}"
+		per_host_gib="${per_host_gib}${per_host_gib:+,}${host}:${gib}"
+		per_host_pids="${per_host_pids}${per_host_pids:+,}${host}:${pids}"
+	done
+
+	DISK_TOTAL_WRITE_BYTES=${total_bytes}
+	DISK_TOTAL_WRITE_GIB=$(awk -v bytes="${total_bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+	DISK_PER_HOST_WRITE_BYTES=${per_host_bytes}
+	DISK_PER_HOST_WRITE_GIB=${per_host_gib}
+	DISK_PER_HOST_WRITE_PIDS=${per_host_pids}
+}
+
+read_host_rdma_xmit_counter() {
+	local host=$1
+	local value
+
+	value=$(ssh "${host}" "cat '${rdma_xmit_counter_path}'") || return $?
+	value=${value//$'\r'/}
+	value=${value//$'\n'/}
+
+	if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
+		echo "Invalid RDMA xmit counter on host=${host}: ${value}" >&2
+		return 2
+	fi
+
+	printf "%s\n" "${value}"
+}
+
+collect_rdma_xmit_start_usage() {
+	local host
+	local units
+
+	RDMA_XMIT_TOTAL_UNITS=""
+	RDMA_XMIT_TOTAL_BYTES=""
+	RDMA_XMIT_TOTAL_GIB=""
+	RDMA_XMIT_PER_HOST_START_UNITS=""
+	RDMA_XMIT_PER_HOST_END_UNITS=""
+	RDMA_XMIT_PER_HOST_DELTA_UNITS=""
+	RDMA_XMIT_PER_HOST_BYTES=""
+	RDMA_XMIT_PER_HOST_GIB=""
+
+	for host in "${hosts[@]}"; do
+		if units=$(read_host_rdma_xmit_counter "${host}"); then
+			LAST_HOST_RDMA_XMIT_START_UNITS["${host}"]=${units}
+			LAST_HOST_RDMA_XMIT_END_UNITS["${host}"]=""
+			LAST_HOST_RDMA_XMIT_DELTA_UNITS["${host}"]=""
+			LAST_HOST_RDMA_XMIT_BYTES["${host}"]=""
+			LAST_HOST_RDMA_XMIT_GIB["${host}"]=""
+			RDMA_XMIT_PER_HOST_START_UNITS="${RDMA_XMIT_PER_HOST_START_UNITS}${RDMA_XMIT_PER_HOST_START_UNITS:+,}${host}:${units}"
+		else
+			echo "Failed to read RDMA xmit start counter on host=${host} from ${rdma_xmit_counter_path}." >&2
+			return 1
+		fi
+	done
+}
+
+collect_rdma_xmit_end_usage() {
+	local host
+	local start_units
+	local end_units
+	local delta_units
+	local bytes
+	local gib
+	local total_units=0
+	local total_bytes=0
+	local per_host_start_units=""
+	local per_host_end_units=""
+	local per_host_delta_units=""
+	local per_host_bytes=""
+	local per_host_gib=""
+
+	RDMA_XMIT_TOTAL_UNITS=""
+	RDMA_XMIT_TOTAL_BYTES=""
+	RDMA_XMIT_TOTAL_GIB=""
+	RDMA_XMIT_PER_HOST_START_UNITS=""
+	RDMA_XMIT_PER_HOST_END_UNITS=""
+	RDMA_XMIT_PER_HOST_DELTA_UNITS=""
+	RDMA_XMIT_PER_HOST_BYTES=""
+	RDMA_XMIT_PER_HOST_GIB=""
+
+	for host in "${hosts[@]}"; do
+		start_units=${LAST_HOST_RDMA_XMIT_START_UNITS[${host}]:-}
+		if ! [[ "${start_units}" =~ ^[0-9]+$ ]]; then
+			echo "Missing RDMA xmit start counter for host=${host}; collect start before running servers." >&2
+			return 1
+		fi
+
+		if end_units=$(read_host_rdma_xmit_counter "${host}"); then
+			:
+		else
+			echo "Failed to read RDMA xmit end counter on host=${host} from ${rdma_xmit_counter_path}." >&2
+			return 1
+		fi
+
+		if ((10#${end_units} < 10#${start_units})); then
+			echo "RDMA xmit counter decreased on host=${host}: start=${start_units}, end=${end_units}" >&2
+			return 1
+		fi
+
+		delta_units=$((10#${end_units} - 10#${start_units}))
+		bytes=$((delta_units * 4))
+		gib=$(awk -v bytes="${bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+
+		LAST_HOST_RDMA_XMIT_END_UNITS["${host}"]=${end_units}
+		LAST_HOST_RDMA_XMIT_DELTA_UNITS["${host}"]=${delta_units}
+		LAST_HOST_RDMA_XMIT_BYTES["${host}"]=${bytes}
+		LAST_HOST_RDMA_XMIT_GIB["${host}"]=${gib}
+
+		total_units=$((total_units + delta_units))
+		total_bytes=$((total_bytes + bytes))
+		per_host_start_units="${per_host_start_units}${per_host_start_units:+,}${host}:${start_units}"
+		per_host_end_units="${per_host_end_units}${per_host_end_units:+,}${host}:${end_units}"
+		per_host_delta_units="${per_host_delta_units}${per_host_delta_units:+,}${host}:${delta_units}"
+		per_host_bytes="${per_host_bytes}${per_host_bytes:+,}${host}:${bytes}"
+		per_host_gib="${per_host_gib}${per_host_gib:+,}${host}:${gib}"
+	done
+
+	RDMA_XMIT_TOTAL_UNITS=${total_units}
+	RDMA_XMIT_TOTAL_BYTES=${total_bytes}
+	RDMA_XMIT_TOTAL_GIB=$(awk -v bytes="${total_bytes}" 'BEGIN { printf "%.2f", bytes / 1024 / 1024 / 1024 }')
+	RDMA_XMIT_PER_HOST_START_UNITS=${per_host_start_units}
+	RDMA_XMIT_PER_HOST_END_UNITS=${per_host_end_units}
+	RDMA_XMIT_PER_HOST_DELTA_UNITS=${per_host_delta_units}
+	RDMA_XMIT_PER_HOST_BYTES=${per_host_bytes}
+	RDMA_XMIT_PER_HOST_GIB=${per_host_gib}
+}
+
 wait_until_stable_space_usage() {
 	local remote_log=$1
 	local start_ts
@@ -386,10 +617,15 @@ write_host_rows() {
 	local host
 
 	for host in "${hosts[@]}"; do
-		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 			"${workload}" "${backup_label}" "${ep}" "${host}" "${LAST_HOST_STATUS[${host}]}" \
 			"${LAST_HOST_TS[${host}]}" "${LAST_HOST_USED_BYTES[${host}]}" "${LAST_HOST_USED_GIB[${host}]}" \
-			"${PREV_HOST_USED_BYTES[${host}]}" "${PREV_HOST_USED_GIB[${host}]}" "${remote_log}" \
+			"${PREV_HOST_USED_BYTES[${host}]}" "${PREV_HOST_USED_GIB[${host}]}" \
+			"${LAST_HOST_DISK_WRITE_PIDS[${host}]}" "${LAST_HOST_DISK_WRITE_BYTES[${host}]}" \
+			"${LAST_HOST_DISK_WRITE_GIB[${host}]}" \
+			"${LAST_HOST_RDMA_XMIT_START_UNITS[${host}]}" "${LAST_HOST_RDMA_XMIT_END_UNITS[${host}]}" \
+			"${LAST_HOST_RDMA_XMIT_DELTA_UNITS[${host}]}" "${LAST_HOST_RDMA_XMIT_BYTES[${host}]}" \
+			"${LAST_HOST_RDMA_XMIT_GIB[${host}]}" "${remote_log}" \
 			>> "${host_file}"
 	done
 }
@@ -407,8 +643,8 @@ join_csv() {
 
 enable_space_occupation_for_experiment
 
-printf "workload\tbackup_method\tepoch\tstatus\ttotal_used_bytes\ttotal_used_gib\tper_host_used_bytes\tper_host_used_gib\tserver_log_path\n" > "${summary_file}"
-printf "workload\tbackup_method\tepoch\thost\tstatus\tlast_timestamp\tused_bytes\tused_gib\tprev_used_bytes\tprev_used_gib\tserver_log_path\n" > "${host_file}"
+printf "workload\tbackup_method\tepoch\tstatus\ttotal_used_bytes\ttotal_used_gib\tper_host_used_bytes\tper_host_used_gib\ttotal_disk_write_bytes\ttotal_disk_write_gib\tper_host_disk_write_bytes\tper_host_disk_write_gib\tper_host_disk_write_pids\ttotal_rdma_xmit_units\ttotal_rdma_xmit_bytes\ttotal_rdma_xmit_gib\tper_host_rdma_xmit_start_units\tper_host_rdma_xmit_end_units\tper_host_rdma_xmit_delta_units\tper_host_rdma_xmit_bytes\tper_host_rdma_xmit_gib\trdma_xmit_counter_path\tserver_log_path\n" > "${summary_file}"
+printf "workload\tbackup_method\tepoch\thost\tstatus\tlast_timestamp\tused_bytes\tused_gib\tprev_used_bytes\tprev_used_gib\tdisk_write_pids\tdisk_write_bytes\tdisk_write_gib\trdma_xmit_start_units\trdma_xmit_end_units\trdma_xmit_delta_units\trdma_xmit_bytes\trdma_xmit_gib\tserver_log_path\n" > "${host_file}"
 
 echo "Running exp2 space occupation with epoch=${epoch}, backups=${backup_methods[*]}, workloads=${workloads[*]}"
 
@@ -426,6 +662,8 @@ for workload in "${workloads[@]}"; do
 
 			echo "Run ${ep}/${epoch}: backup=${backup_label}, workload=${workload}, tag=${run_tag}" >&2
 
+			collect_rdma_xmit_start_usage
+
 			"${basic_script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
 				-r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
 				-d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" -k \
@@ -437,15 +675,24 @@ for workload in "${workloads[@]}"; do
 			filter_ops_file "${ops_file}"
 
 			wait_until_stable_space_usage "${server_log_path}"
+			collect_disk_write_usage
+			collect_rdma_xmit_end_usage
 			stop_servers
 			servers_may_be_running=0
 
-			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
 				"${workload}" "${backup_label}" "${ep}" "${SPACE_STATUS}" \
 				"${SPACE_TOTAL_USED_BYTES}" "${SPACE_TOTAL_USED_GIB}" \
-				"${SPACE_PER_HOST_USED_BYTES}" "${SPACE_PER_HOST_USED_GIB}" "${server_log_path}" \
+				"${SPACE_PER_HOST_USED_BYTES}" "${SPACE_PER_HOST_USED_GIB}" \
+				"${DISK_TOTAL_WRITE_BYTES}" "${DISK_TOTAL_WRITE_GIB}" \
+				"${DISK_PER_HOST_WRITE_BYTES}" "${DISK_PER_HOST_WRITE_GIB}" \
+				"${DISK_PER_HOST_WRITE_PIDS}" \
+				"${RDMA_XMIT_TOTAL_UNITS}" "${RDMA_XMIT_TOTAL_BYTES}" "${RDMA_XMIT_TOTAL_GIB}" \
+				"${RDMA_XMIT_PER_HOST_START_UNITS}" "${RDMA_XMIT_PER_HOST_END_UNITS}" \
+				"${RDMA_XMIT_PER_HOST_DELTA_UNITS}" "${RDMA_XMIT_PER_HOST_BYTES}" \
+				"${RDMA_XMIT_PER_HOST_GIB}" "${rdma_xmit_counter_path}" "${server_log_path}" \
 				>> "${summary_file}"
-			echo "Space usage result: workload=${workload}, backup=${backup_label}, epoch=${ep}, total_used_gib=${SPACE_TOTAL_USED_GIB}" >&2
+			echo "Space usage result: workload=${workload}, backup=${backup_label}, epoch=${ep}, total_used_gib=${SPACE_TOTAL_USED_GIB}, total_disk_write_gib=${DISK_TOTAL_WRITE_GIB}, total_rdma_xmit_gib=${RDMA_XMIT_TOTAL_GIB}" >&2
 
 			write_host_rows "${workload}" "${backup_label}" "${ep}" "${server_log_path}"
 
@@ -482,7 +729,7 @@ plot_output_dir="${results_dir}"
 
 echo ""
 echo "Executing command:"
-echo "python3 \"${basic_script_dir}/plot_exp2_space_bar.py\" --input \"${summary_file}\" --output \"${plot_output_dir}\" --workloads \"${workload_csv}\" --backups \"${backup_csv}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y-axis-label \"Space usage (GiB)\""
+echo "python3 \"${basic_script_dir}/plot_exp2_space_bar.py\" --input \"${summary_file}\" --output \"${plot_output_dir}\" --workloads \"${workload_csv}\" --backups \"${backup_csv}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y-axis-label \"Space usage (GiB)\" --value-column total_used_gib --output-name space_occupation.pdf"
 
 python3 "${basic_script_dir}/plot_exp2_space_bar.py" \
 	--input "${summary_file}" \
@@ -492,4 +739,38 @@ python3 "${basic_script_dir}/plot_exp2_space_bar.py" \
 	--bar-label "${bar_label_csv}" \
 	--item-labels "${item_label_csv}" \
 	--x-axis-label "Workload" \
-	--y-axis-label "Space usage (GiB)"
+	--y-axis-label "Space usage (GiB)" \
+	--value-column total_used_gib \
+	--output-name space_occupation.pdf
+
+echo ""
+echo "Executing command:"
+echo "python3 \"${basic_script_dir}/plot_exp2_space_bar.py\" --input \"${summary_file}\" --output \"${plot_output_dir}\" --workloads \"${workload_csv}\" --backups \"${backup_csv}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y-axis-label \"Disk writes (GiB)\" --value-column total_disk_write_gib --output-name disk_write.pdf"
+
+python3 "${basic_script_dir}/plot_exp2_space_bar.py" \
+	--input "${summary_file}" \
+	--output "${plot_output_dir}" \
+	--workloads "${workload_csv}" \
+	--backups "${backup_csv}" \
+	--bar-label "${bar_label_csv}" \
+	--item-labels "${item_label_csv}" \
+	--x-axis-label "Workload" \
+	--y-axis-label "Disk writes (GiB)" \
+	--value-column total_disk_write_gib \
+	--output-name disk_write.pdf
+
+echo ""
+echo "Executing command:"
+echo "python3 \"${basic_script_dir}/plot_exp2_space_bar.py\" --input \"${summary_file}\" --output \"${plot_output_dir}\" --workloads \"${workload_csv}\" --backups \"${backup_csv}\" --bar-label \"${bar_label_csv}\" --item-labels \"${item_label_csv}\" --x-axis-label \"Workload\" --y-axis-label \"RDMA xmit (GiB)\" --value-column total_rdma_xmit_gib --output-name rdma_xmit.pdf"
+
+python3 "${basic_script_dir}/plot_exp2_space_bar.py" \
+	--input "${summary_file}" \
+	--output "${plot_output_dir}" \
+	--workloads "${workload_csv}" \
+	--backups "${backup_csv}" \
+	--bar-label "${bar_label_csv}" \
+	--item-labels "${item_label_csv}" \
+	--x-axis-label "Workload" \
+	--y-axis-label "RDMA xmit (GiB)" \
+	--value-column total_rdma_xmit_gib \
+	--output-name rdma_xmit.pdf
