@@ -10,7 +10,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 gc_method=none
 backup_methods=(
 	replication
-	offline_coding
+	elect
 )
 load_times=100000000
 run_times=700000000
