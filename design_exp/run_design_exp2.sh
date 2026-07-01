@@ -28,24 +28,22 @@ gc_methods=(
 )
 sync_gc_times=(
 	150
-	800
+	600
 )
 backup_label="offline_coding"
 backup_method="offline_coding"
 regions_file="regions_file_cross"
 load_times=100000000
 run_times_values=(
-    300000000
-    400000000
-    500000000
+    1000000000
 )
 ops_lower_threshold=000000000
-ops_higher_threshold=900000000
+ops_higher_threshold=1200000000
 workloads=(
 	a
 )
-server_threads=4
-client_threads=16
+server_threads=8
+client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 gc_print_check_interval_sec=30
 gc_print_check_timeout_sec=0

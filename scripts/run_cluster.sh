@@ -183,7 +183,7 @@ start_zookeeper() {
 start_servers() {
     local server_cmd
     local cgroup_memory_limit_bytes
-    server_cmd="numactl --physcpubind=0-47 --membind=0 ./tebis_server/tebis_server -b ${backup_method} -g ${gc_method} -d /mnt/solidigmssd/slimdata -z ${ZOOKEEPER_ENDPOINT} -r 10.0.0 -p 16 -c $((server_threads + 1)) -t 128 -n mlx5_0"
+    server_cmd="numactl --physcpubind=0-47 --membind=0 ./tebis_server/tebis_server -b ${backup_method} -g ${gc_method} -d /mnt/solidigmssd/slimdata -z ${ZOOKEEPER_ENDPOINT} -r 10.0.0 -p 16 -c $((server_threads + 1)) -t 192 -n mlx5_0"
     cgroup_memory_limit_bytes=$((cgroup_memory_limit_gb * 1024 * 1024 * 1024))
 
     echo "Starting tebis servers on hosts: ${HOSTS[*]}"

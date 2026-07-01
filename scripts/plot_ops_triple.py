@@ -46,7 +46,7 @@ Y_AXIS_MAX_TICKS = 10
 Y_LABEL_X = -0.095
 Y_LABEL_Y = 0.5
 X_LABEL_PAD = 10
-X_AXIS_TICK_TARGET = 6
+X_AXIS_TICK_TARGET = 18
 X_AXIS_MIN_RIGHT_MARGIN = 1
 AVG_LABEL_Y_OFFSET = 4
 RIGHT_LABEL_X_OFFSET = -10
@@ -674,14 +674,14 @@ def main():
     ax.set_xlim(left=0, right=x_right)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels(x_tick_labels)
-    ax.set_xticks(x_minor_ticks, minor=True)
+    # ax.set_xticks(x_minor_ticks, minor=True)
     ax.set_ylim(bottom=0, top=y_top)
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_tick_labels)
     ax.grid(False)
     annotate_series_averages(ax, plotted_series, args.avg, x_right)
     ax.tick_params(axis="x", width=TICK_LINEWIDTH)
-    ax.tick_params(axis="x", which="minor", width=TICK_LINEWIDTH, length=4, labelbottom=False)
+    # ax.tick_params(axis="x", which="minor", width=TICK_LINEWIDTH, length=4, labelbottom=False)
     ax.tick_params(axis="y", width=TICK_LINEWIDTH)
     for spine in ax.spines.values():
         spine.set_linewidth(AXIS_LINEWIDTH)

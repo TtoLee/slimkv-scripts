@@ -22,8 +22,12 @@ from matplotlib import font_manager
 from matplotlib.colors import to_rgba
 from matplotlib.ticker import AutoMinorLocator, FormatStrFormatter, NullFormatter
 
-REGION_PATTERN = re.compile(r"region min key:\s*(.*)")
-SEGMENT_PATTERN = re.compile(r"segment(?: index|_id):\s*(\d+),\s*valid_size:\s*(\d+),?")
+REGION_PATTERN = re.compile(r"region min key:\s*([^,]+)")
+SEGMENT_PATTERN = re.compile(r"segment(?: index|_id):\s*(\d+).*?valid_size:\s*(\d+)")
+GC_SEGMENT_DATA_PATTERN = re.compile(
+    r"\[GC segment valid data\]\s*region:\s*([^,]+).*?"
+    r"segment(?: index|_id):\s*(\d+).*?valid_size:\s*(\d+)"
+)
 DONE_MARKER = "Finished printing GC segment valid data for all regions"
 SEGMENT_BYTES = 2 * 1024 * 1024
 PERCENT_COLORS = ["#9AC9DB", "#BB9727", "#C82423", "#54B345"]
@@ -225,6 +229,14 @@ def parse_last_completed_cycle(path: Path):
                     completed_cycles.append(current_cycle)
                 current_cycle = {}
                 current_region = None
+                continue
+
+            gc_segment_match = GC_SEGMENT_DATA_PATTERN.search(raw_line)
+            if gc_segment_match:
+                region = gc_segment_match.group(1).strip()
+                index = int(gc_segment_match.group(2))
+                valid_size = int(gc_segment_match.group(3))
+                current_cycle.setdefault(region, {})[index] = valid_size
                 continue
 
             region_match = REGION_PATTERN.search(raw_line)

@@ -10,17 +10,16 @@ epoch=5
 gc_method=none
 backup_methods=(
     replication
-    elect
     offline_coding
 )
 load_times=100000000
-run_times=700000000
+run_times=1000000000
 ops_lower_threshold=200000000
-ops_higher_threshold=500000000
+ops_higher_threshold=700000000
 workloads=(
-    load
+    c
     ) 
-server_threads=4
+server_threads=8
 client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 results_dir=""

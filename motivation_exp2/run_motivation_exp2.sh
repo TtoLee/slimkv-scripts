@@ -21,7 +21,7 @@ load_times=100000000
 run_times=1500000000
 ops_lower_threshold=200000000
 ops_higher_threshold=1200000000
-server_threads=4
+server_threads=8
 client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 

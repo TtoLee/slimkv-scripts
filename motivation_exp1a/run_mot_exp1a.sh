@@ -8,29 +8,31 @@ basic_script_dir="${project_dir}/ycsb_log/scripts"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 gc_method=none
-backup_label="elect"
-backup_method="elect"
-regions_file="regions_file_elect"
+backup_methods=(
+	replication
+	elect
+	elect+
+)
 load_times=100000000
-run_times=500000000
+run_times=700000000
 ops_lower_threshold=000000000
 ops_higher_threshold=900000000
 workloads=(
 	load
 )
-server_threads=4
+server_threads=8
 client_threads=16
 date_time=$(date +%Y%m%d_%H%M%S)
 stable_check_interval_sec=100
 stable_check_timeout_sec=0
 servers_may_be_running=0
-ec_payload_bytes_per_stripe=$((4 * 2 * 1024 * 1024 - 4096 * 4))
+current_backup_method=""
 
 results_dir=""
 summary_file=""
 final_file=""
 
-elect_hosts=(
+cluster_hosts=(
 	10.118.0.227
 	10.118.0.28
 	10.118.0.229
@@ -39,60 +41,66 @@ elect_hosts=(
 	10.118.0.32
 )
 
-ELECT_OVERHEAD_STATUS=""
-ELECT_OVERHEAD_TIMESTAMP="PER_HOST_LAST"
-ELECT_PRIMARY_TO_LEADER_BYTES=0
-ELECT_LEADER_TO_OTHER_BYTES=0
-ELECT_TOTAL_BYTES=0
-ELECT_CODED_STRIPE_SUM=0
-ELECT_TOTAL_PRIMARY_BYTES=0
-ELECT_EC_DATA_SIZE_BYTES=0
-ELECT_PRIMARY_TO_LEADER_GB="0"
-ELECT_LEADER_TO_OTHER_GB="0"
-ELECT_TOTAL_GB="0"
-ELECT_TOTAL_PRIMARY_GB="0"
-ELECT_EC_DATA_SIZE_GB="0"
+OVERHEAD_STATUS=""
+OVERHEAD_TIMESTAMP="PER_HOST_LAST"
+TEBIS_PRIMARY_DATA_WRITE_BYTES=0
+TEBIS_REPLICA_DATA_WRITE_BYTES=0
+ELECT_PRIMARY_READ_BYTES=0
+ELECT_LEADER_PARITY_READ_BYTES=0
+ELECT_LEADER_PARITY_WRITE_BYTES=0
+ELECT_OTHER_PARITY_WRITE_BYTES=0
+TEBIS_PRIMARY_DATA_WRITE_GB="0"
+TEBIS_REPLICA_DATA_WRITE_GB="0"
+ELECT_PRIMARY_READ_GB="0"
+ELECT_LEADER_PARITY_READ_GB="0"
+ELECT_LEADER_PARITY_WRITE_GB="0"
+ELECT_OTHER_PARITY_WRITE_GB="0"
 
 declare -A LAST_HOST_STATUS=()
-declare -A LAST_HOST_TS=()
-declare -A LAST_HOST_P2L_BYTES=()
-declare -A LAST_HOST_L2O_BYTES=()
-declare -A LAST_HOST_TOTAL_BYTES=()
-declare -A LAST_HOST_P2L_GB=()
-declare -A LAST_HOST_L2O_GB=()
-declare -A LAST_HOST_TOTAL_GB=()
-declare -A LAST_HOST_CODED_STRIPE=()
-declare -A LAST_HOST_TOTAL_PRIMARY_BYTES=()
-declare -A LAST_HOST_TOTAL_PRIMARY_GB=()
-declare -A LAST_HOST_EC_DATA_SIZE_BYTES=()
-declare -A LAST_HOST_EC_DATA_SIZE_GB=()
+declare -A LAST_HOST_TEBIS_TS=()
+declare -A LAST_HOST_ELECT_TS=()
+declare -A LAST_HOST_PRIMARY_DATA_WRITE_BYTES=()
+declare -A LAST_HOST_REPLICA_DATA_WRITE_BYTES=()
+declare -A LAST_HOST_PRIMARY_READ_BYTES=()
+declare -A LAST_HOST_LEADER_PARITY_READ_BYTES=()
+declare -A LAST_HOST_LEADER_PARITY_WRITE_BYTES=()
+declare -A LAST_HOST_OTHER_PARITY_WRITE_BYTES=()
+declare -A LAST_HOST_PRIMARY_DATA_WRITE_GB=()
+declare -A LAST_HOST_REPLICA_DATA_WRITE_GB=()
+declare -A LAST_HOST_PRIMARY_READ_GB=()
+declare -A LAST_HOST_LEADER_PARITY_READ_GB=()
+declare -A LAST_HOST_LEADER_PARITY_WRITE_GB=()
+declare -A LAST_HOST_OTHER_PARITY_WRITE_GB=()
 
 declare -A FINAL_HOST_STATUS=()
-declare -A FINAL_HOST_TS=()
-declare -A FINAL_HOST_P2L_BYTES=()
-declare -A FINAL_HOST_L2O_BYTES=()
-declare -A FINAL_HOST_TOTAL_BYTES=()
-declare -A FINAL_HOST_P2L_GB=()
-declare -A FINAL_HOST_L2O_GB=()
-declare -A FINAL_HOST_TOTAL_GB=()
-declare -A FINAL_HOST_CODED_STRIPE=()
-declare -A FINAL_HOST_TOTAL_PRIMARY_BYTES=()
-declare -A FINAL_HOST_TOTAL_PRIMARY_GB=()
-declare -A FINAL_HOST_EC_DATA_SIZE_BYTES=()
-declare -A FINAL_HOST_EC_DATA_SIZE_GB=()
+declare -A FINAL_HOST_TEBIS_TS=()
+declare -A FINAL_HOST_ELECT_TS=()
+declare -A FINAL_HOST_PRIMARY_DATA_WRITE_BYTES=()
+declare -A FINAL_HOST_REPLICA_DATA_WRITE_BYTES=()
+declare -A FINAL_HOST_PRIMARY_READ_BYTES=()
+declare -A FINAL_HOST_LEADER_PARITY_READ_BYTES=()
+declare -A FINAL_HOST_LEADER_PARITY_WRITE_BYTES=()
+declare -A FINAL_HOST_OTHER_PARITY_WRITE_BYTES=()
+declare -A FINAL_HOST_PRIMARY_DATA_WRITE_GB=()
+declare -A FINAL_HOST_REPLICA_DATA_WRITE_GB=()
+declare -A FINAL_HOST_PRIMARY_READ_GB=()
+declare -A FINAL_HOST_LEADER_PARITY_READ_GB=()
+declare -A FINAL_HOST_LEADER_PARITY_WRITE_GB=()
+declare -A FINAL_HOST_OTHER_PARITY_WRITE_GB=()
 
-declare -A FINAL_WORKLOAD_STATUS=()
-declare -A FINAL_WORKLOAD_P2L_BYTES=()
-declare -A FINAL_WORKLOAD_L2O_BYTES=()
-declare -A FINAL_WORKLOAD_TOTAL_BYTES=()
-declare -A FINAL_WORKLOAD_P2L_GB=()
-declare -A FINAL_WORKLOAD_L2O_GB=()
-declare -A FINAL_WORKLOAD_TOTAL_GB=()
-declare -A FINAL_WORKLOAD_CODED_STRIPE_SUM=()
-declare -A FINAL_WORKLOAD_TOTAL_PRIMARY_BYTES=()
-declare -A FINAL_WORKLOAD_TOTAL_PRIMARY_GB=()
-declare -A FINAL_WORKLOAD_EC_DATA_SIZE_BYTES=()
-declare -A FINAL_WORKLOAD_EC_DATA_SIZE_GB=()
+declare -A FINAL_RUN_STATUS=()
+declare -A FINAL_RUN_PRIMARY_DATA_WRITE_BYTES=()
+declare -A FINAL_RUN_REPLICA_DATA_WRITE_BYTES=()
+declare -A FINAL_RUN_PRIMARY_READ_BYTES=()
+declare -A FINAL_RUN_LEADER_PARITY_READ_BYTES=()
+declare -A FINAL_RUN_LEADER_PARITY_WRITE_BYTES=()
+declare -A FINAL_RUN_OTHER_PARITY_WRITE_BYTES=()
+declare -A FINAL_RUN_PRIMARY_DATA_WRITE_GB=()
+declare -A FINAL_RUN_REPLICA_DATA_WRITE_GB=()
+declare -A FINAL_RUN_PRIMARY_READ_GB=()
+declare -A FINAL_RUN_LEADER_PARITY_READ_GB=()
+declare -A FINAL_RUN_LEADER_PARITY_WRITE_GB=()
+declare -A FINAL_RUN_OTHER_PARITY_WRITE_GB=()
 
 usage() {
 	echo "Usage: $0 -n nickname"
@@ -116,25 +124,74 @@ if [[ -z "${nickname}" ]]; then
 fi
 
 if [[ -n "${MOT_EXP1A_HOSTS:-}" ]]; then
-	read -r -a elect_hosts <<< "${MOT_EXP1A_HOSTS}"
+	read -r -a cluster_hosts <<< "${MOT_EXP1A_HOSTS}"
 fi
 
-if [[ ${#elect_hosts[@]} -ne 6 ]]; then
-	echo "This script expects exactly 6 hosts, got: ${#elect_hosts[@]}" >&2
+if [[ ${#cluster_hosts[@]} -ne 6 ]]; then
+	echo "This script expects exactly 6 hosts, got: ${#cluster_hosts[@]}" >&2
 	exit 1
 fi
 
-stop_elect_servers() {
+resolve_backup_config() {
+	local backup_label=$1
+
+	case "${backup_label}" in
+	replication)
+		echo "online_coding regions_file_elect"
+		;;
+	elect)
+		echo "elect regions_file_elect"
+		;;
+	elect+)
+		echo "elect regions_file_elect"
+		;;
+	*)
+		echo "Unsupported backup method label: ${backup_label}" >&2
+		exit 1
+		;;
+	esac
+}
+
+sync_and_build_all_nodes() {
+	local cmake_args=("$@")
+
+	echo "Syncing source and building locally/remotely via ./scp.sh ${cmake_args[*]} ..." >&2
+	(
+		cd "${project_dir}"
+		./scp.sh "${cmake_args[@]}"
+	)
+}
+
+sync_and_build_for_backup() {
+	local backup_label=$1
+
+	case "${backup_label}" in
+	replication)
+		sync_and_build_all_nodes
+		;;
+	elect)
+		sync_and_build_all_nodes -DELECT_MINIMIZE_NETWORK=OFF
+		;;
+	elect+)
+		# Use scp.sh defaults, currently including -DELECT_MINIMIZE_NETWORK=ON.
+		sync_and_build_all_nodes
+		;;
+	esac
+}
+
+stop_servers() {
+	local backup_method=$1
 	local host
-	for host in "${elect_hosts[@]}"; do
+
+	for host in "${cluster_hosts[@]}"; do
 		ssh "${host}" "sudo pkill -f 'tebis_server/tebis_server -b ${backup_method}'" >/dev/null 2>&1 || true
 	done
 }
 
 cleanup() {
-	if [[ ${servers_may_be_running} -eq 1 ]]; then
+	if [[ ${servers_may_be_running} -eq 1 && -n "${current_backup_method}" ]]; then
 		echo "Stopping tebis servers from motivation_exp1a cleanup..." >&2
-		stop_elect_servers
+		stop_servers "${current_backup_method}"
 		servers_may_be_running=0
 	fi
 }
@@ -143,8 +200,8 @@ trap cleanup EXIT
 
 results_dir="${script_dir}/${nickname}_${date_time}"
 mkdir -p "${results_dir}"
-summary_file="${results_dir}/elect_network_overhead_runs.tsv"
-final_file="${results_dir}/elect_network_overhead_final.tsv"
+summary_file="${results_dir}/disk_overhead_runs.tsv"
+final_file="${results_dir}/disk_overhead_final.tsv"
 
 filter_ops_file() {
 	local ops_file=$1
@@ -185,18 +242,11 @@ bytes_to_gb() {
 	awk -v b="${bytes}" 'BEGIN { printf "%.6f", b / (1024 * 1024 * 1024) }'
 }
 
-stripe_count_to_ec_data_bytes() {
-	local stripe_count=$1
-	echo $((stripe_count * ec_payload_bytes_per_stripe))
-}
-
-extract_host_last_two() {
+extract_host_last_two_tebis_disk_overhead() {
 	local host=$1
 	local remote_log=$2
 	local remote_tail
 
-	# Exit codes from remote side:
-	# 3 -> file not found, 4 -> file unreadable, 2 -> no ELECT lines.
 	remote_tail=$(ssh "${host}" "
 		if [ ! -e '${remote_log}' ]; then
 			exit 3
@@ -204,7 +254,7 @@ extract_host_last_two() {
 		if [ ! -r '${remote_log}' ]; then
 			exit 4
 		fi
-		grep -F '[ELECT network overhead]' '${remote_log}' | tail -n 2
+		grep -F '[TEBIS disk overhead]' '${remote_log}' | tail -n 2 || exit 2
 	") || return $?
 
 	if [[ -z "${remote_tail}" ]]; then
@@ -215,31 +265,21 @@ extract_host_last_two() {
 	BEGIN {
 		cnt = 0
 	}
-	/\[ELECT network overhead\]/ {
+	/\[TEBIS disk overhead\]/ {
 		ts = $1
-		p2l = $0
-		l2o = $0
-		coded = $0
-		total_primary = $0
-		sub(/^.*primary to leader parity: /, "", p2l)
-		sub(/ B, leader parity to other parity:.*$/, "", p2l)
-		sub(/^.*leader parity to other parity: /, "", l2o)
-		sub(/ B.*$/, "", l2o)
-		sub(/^.*coded stripe: /, "", coded)
-		sub(/[^0-9].*$/, "", coded)
-		sub(/^.*total primary byte: /, "", total_primary)
-		sub(/ B.*$/, "", total_primary)
-		if (ts ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ && p2l ~ /^[0-9]+$/ && l2o ~ /^[0-9]+$/ && coded ~ /^[0-9]+$/ && total_primary ~ /^[0-9]+$/) {
+		primary_write = $0
+		replica_write = $0
+		sub(/^.*primary data write: /, "", primary_write)
+		sub(/ B, replica data write:.*$/, "", primary_write)
+		sub(/^.*replica data write: /, "", replica_write)
+		sub(/ B.*$/, "", replica_write)
+		if (primary_write ~ /^[0-9]+$/ && replica_write ~ /^[0-9]+$/) {
 			prev_ts = last_ts
-			prev_p2l = last_p2l
-			prev_l2o = last_l2o
-			prev_coded = last_coded
-			prev_total_primary = last_total_primary
+			prev_primary_write = last_primary_write
+			prev_replica_write = last_replica_write
 			last_ts = ts
-			last_p2l = p2l + 0
-			last_l2o = l2o + 0
-			last_coded = coded + 0
-			last_total_primary = total_primary + 0
+			last_primary_write = primary_write + 0
+			last_replica_write = replica_write + 0
 			cnt++
 		}
 	}
@@ -248,110 +288,230 @@ extract_host_last_two() {
 			exit 2
 		}
 		if (cnt == 1) {
-			printf "ONE\t%s\t%.0f\t%.0f\t%.0f\t%.0f\tNA\t0\t0\t0\t0\n", last_ts, last_p2l, last_l2o, last_coded, last_total_primary
+			printf "ONE\t%s\t%.0f\t%.0f\tNA\t0\t0\n",
+				last_ts, last_primary_write, last_replica_write
 			exit 0
 		}
-		printf "OK\t%s\t%.0f\t%.0f\t%.0f\t%.0f\t%s\t%.0f\t%.0f\t%.0f\t%.0f\n", last_ts, last_p2l, last_l2o, last_coded, last_total_primary, prev_ts, prev_p2l, prev_l2o, prev_coded, prev_total_primary
+		printf "OK\t%s\t%.0f\t%.0f\t%s\t%.0f\t%.0f\n",
+			last_ts, last_primary_write, last_replica_write,
+			prev_ts, prev_primary_write, prev_replica_write
 	}
 	' <<< "${remote_tail}"
 }
 
-collect_last_two_elect_overhead() {
+extract_host_last_two_elect_disk_overhead() {
+	local host=$1
+	local remote_log=$2
+	local remote_tail
+
+	remote_tail=$(ssh "${host}" "
+		if [ ! -e '${remote_log}' ]; then
+			exit 3
+		fi
+		if [ ! -r '${remote_log}' ]; then
+			exit 4
+		fi
+		grep -F '[ELECT disk overhead]' '${remote_log}' | tail -n 2 || exit 2
+	") || return $?
+
+	if [[ -z "${remote_tail}" ]]; then
+		return 2
+	fi
+
+	awk '
+	BEGIN {
+		cnt = 0
+	}
+	/\[ELECT disk overhead\]/ {
+		ts = $1
+		primary_read = $0
+		leader_read = $0
+		leader_write = $0
+		other_write = $0
+		sub(/^.*primary read: /, "", primary_read)
+		sub(/ B, leader parity read:.*$/, "", primary_read)
+		sub(/^.*leader parity read: /, "", leader_read)
+		sub(/ B, leader parity write:.*$/, "", leader_read)
+		sub(/^.*leader parity write: /, "", leader_write)
+		sub(/ B, other parity write:.*$/, "", leader_write)
+		sub(/^.*other parity write: /, "", other_write)
+		sub(/ B.*$/, "", other_write)
+		if (primary_read ~ /^[0-9]+$/ && leader_read ~ /^[0-9]+$/ &&
+			leader_write ~ /^[0-9]+$/ && other_write ~ /^[0-9]+$/) {
+			prev_ts = last_ts
+			prev_primary_read = last_primary_read
+			prev_leader_read = last_leader_read
+			prev_leader_write = last_leader_write
+			prev_other_write = last_other_write
+			last_ts = ts
+			last_primary_read = primary_read + 0
+			last_leader_read = leader_read + 0
+			last_leader_write = leader_write + 0
+			last_other_write = other_write + 0
+			cnt++
+		}
+	}
+	END {
+		if (cnt == 0) {
+			exit 2
+		}
+		if (cnt == 1) {
+			printf "ONE\t%s\t%.0f\t%.0f\t%.0f\t%.0f\tNA\t0\t0\t0\t0\n",
+				last_ts, last_primary_read, last_leader_read, last_leader_write, last_other_write
+			exit 0
+		}
+		printf "OK\t%s\t%.0f\t%.0f\t%.0f\t%.0f\t%s\t%.0f\t%.0f\t%.0f\t%.0f\n",
+			last_ts, last_primary_read, last_leader_read, last_leader_write, last_other_write,
+			prev_ts, prev_primary_read, prev_leader_read, prev_leader_write, prev_other_write
+	}
+	' <<< "${remote_tail}"
+}
+
+print_remote_log_debug() {
+	local host=$1
+	local remote_log=$2
+	local pattern=$3
+
+	ssh "${host}" "echo '--- tail -n 5 ${remote_log} ---' >&2; tail -n 5 '${remote_log}' 2>/dev/null >&2 || true; echo '--- grep ${pattern} tail -n 5 ---' >&2; grep -F '${pattern}' '${remote_log}' 2>/dev/null | tail -n 5 >&2 || true" || true
+}
+
+collect_last_two_disk_overhead() {
 	local remote_log=$1
-	local verbose_fail=${2:-1}
+	local backup_label=$2
+	local verbose_fail=${3:-1}
+	local need_elect=1
 	local host
-	local host_line
-	local row_status
-	local last_ts
-	local last_p2l
-	local last_l2o
-	local last_coded
-	local last_total_primary
-	local prev_ts
-	local prev_p2l
-	local prev_l2o
-	local prev_coded
-	local prev_total_primary
+	local tebis_line
+	local elect_line
+	local tebis_status
+	local elect_status
+	local last_tebis_ts
+	local prev_tebis_ts
+	local last_primary_write
+	local last_replica_write
+	local prev_primary_write
+	local prev_replica_write
+	local last_elect_ts
+	local prev_elect_ts
+	local last_primary_read
+	local last_leader_read
+	local last_leader_write
+	local last_other_write
+	local prev_primary_read
+	local prev_leader_read
+	local prev_leader_write
+	local prev_other_write
 	local host_stable
-	local host_ec_data_size_bytes
 	local all_hosts_stable=1
 	local rc
 
-	ELECT_PRIMARY_TO_LEADER_BYTES=0
-	ELECT_LEADER_TO_OTHER_BYTES=0
-	ELECT_TOTAL_BYTES=0
-	ELECT_CODED_STRIPE_SUM=0
-	ELECT_TOTAL_PRIMARY_BYTES=0
-	ELECT_EC_DATA_SIZE_BYTES=0
-	ELECT_OVERHEAD_TIMESTAMP="PER_HOST_LAST"
+	if [[ "${backup_label}" == "replication" ]]; then
+		need_elect=0
+	fi
 
-	for host in "${elect_hosts[@]}"; do
-		if host_line=$(extract_host_last_two "${host}" "${remote_log}"); then
+	TEBIS_PRIMARY_DATA_WRITE_BYTES=0
+	TEBIS_REPLICA_DATA_WRITE_BYTES=0
+	ELECT_PRIMARY_READ_BYTES=0
+	ELECT_LEADER_PARITY_READ_BYTES=0
+	ELECT_LEADER_PARITY_WRITE_BYTES=0
+	ELECT_OTHER_PARITY_WRITE_BYTES=0
+	OVERHEAD_TIMESTAMP="PER_HOST_LAST"
+
+	for host in "${cluster_hosts[@]}"; do
+		if tebis_line=$(extract_host_last_two_tebis_disk_overhead "${host}" "${remote_log}"); then
 			:
 		else
 			rc=$?
 			if [[ ${verbose_fail} -eq 1 ]]; then
-				if [[ ${rc} -eq 3 ]]; then
-					echo "Remote log not found on host=${host}: ${remote_log}" >&2
-				elif [[ ${rc} -eq 4 ]]; then
-					echo "Remote log exists but is not readable on host=${host}: ${remote_log}" >&2
-				elif [[ ${rc} -eq 2 ]]; then
-					echo "No ELECT overhead lines in remote log on host=${host}: ${remote_log}" >&2
-				else
-					echo "Failed to parse remote log on host=${host}: ${remote_log} (rc=${rc})" >&2
-				fi
-				ssh "${host}" "echo '--- tail -n 5 ${remote_log} ---' >&2; tail -n 5 '${remote_log}' 2>/dev/null >&2 || true; echo '--- grep ELECT tail -n 5 ---' >&2; grep -F '[ELECT network overhead]' '${remote_log}' 2>/dev/null | tail -n 5 >&2 || true" || true
+				echo "Failed to parse TEBIS disk overhead on host=${host}: ${remote_log} (rc=${rc})" >&2
+				print_remote_log_debug "${host}" "${remote_log}" "[TEBIS disk overhead]"
 			fi
 			return 1
 		fi
 
-		IFS=$'\t' read -r row_status last_ts last_p2l last_l2o last_coded last_total_primary prev_ts prev_p2l prev_l2o prev_coded prev_total_primary <<< "${host_line}"
-
+		IFS=$'\t' read -r tebis_status last_tebis_ts last_primary_write last_replica_write prev_tebis_ts prev_primary_write prev_replica_write <<< "${tebis_line}"
 		host_stable="UNSTABLE"
-		if [[ "${row_status}" == "OK" && "${last_p2l}" == "${prev_p2l}" && "${last_l2o}" == "${prev_l2o}" && "${last_coded}" == "${prev_coded}" && "${last_total_primary}" == "${prev_total_primary}" ]]; then
+		if [[ "${tebis_status}" == "OK" &&
+			"${last_primary_write}" == "${prev_primary_write}" &&
+			"${last_replica_write}" == "${prev_replica_write}" ]]; then
 			host_stable="STABLE"
 		else
 			all_hosts_stable=0
 		fi
 
-		LAST_HOST_STATUS["${host}"]=${host_stable}
-		LAST_HOST_TS["${host}"]=${last_ts}
-		LAST_HOST_P2L_BYTES["${host}"]=${last_p2l}
-		LAST_HOST_L2O_BYTES["${host}"]=${last_l2o}
-		LAST_HOST_TOTAL_BYTES["${host}"]=$((last_p2l + last_l2o))
-		LAST_HOST_P2L_GB["${host}"]=$(bytes_to_gb "${last_p2l}")
-		LAST_HOST_L2O_GB["${host}"]=$(bytes_to_gb "${last_l2o}")
-		LAST_HOST_TOTAL_GB["${host}"]=$(bytes_to_gb "$((last_p2l + last_l2o))")
-		LAST_HOST_CODED_STRIPE["${host}"]=${last_coded}
-		LAST_HOST_TOTAL_PRIMARY_BYTES["${host}"]=${last_total_primary}
-		LAST_HOST_TOTAL_PRIMARY_GB["${host}"]=$(bytes_to_gb "${last_total_primary}")
-		host_ec_data_size_bytes=$(stripe_count_to_ec_data_bytes "${last_coded}")
-		LAST_HOST_EC_DATA_SIZE_BYTES["${host}"]=${host_ec_data_size_bytes}
-		LAST_HOST_EC_DATA_SIZE_GB["${host}"]=$(bytes_to_gb "${host_ec_data_size_bytes}")
+		last_elect_ts="N/A"
+		last_primary_read=0
+		last_leader_read=0
+		last_leader_write=0
+		last_other_write=0
 
-		ELECT_PRIMARY_TO_LEADER_BYTES=$((ELECT_PRIMARY_TO_LEADER_BYTES + last_p2l))
-		ELECT_LEADER_TO_OTHER_BYTES=$((ELECT_LEADER_TO_OTHER_BYTES + last_l2o))
-		ELECT_CODED_STRIPE_SUM=$((ELECT_CODED_STRIPE_SUM + last_coded))
-		ELECT_TOTAL_PRIMARY_BYTES=$((ELECT_TOTAL_PRIMARY_BYTES + last_total_primary))
+		if [[ ${need_elect} -eq 1 ]]; then
+			if elect_line=$(extract_host_last_two_elect_disk_overhead "${host}" "${remote_log}"); then
+				:
+			else
+				rc=$?
+				if [[ ${verbose_fail} -eq 1 ]]; then
+					echo "Failed to parse ELECT disk overhead on host=${host}: ${remote_log} (rc=${rc})" >&2
+					print_remote_log_debug "${host}" "${remote_log}" "[ELECT disk overhead]"
+				fi
+				return 1
+			fi
+
+			IFS=$'\t' read -r elect_status last_elect_ts last_primary_read last_leader_read last_leader_write last_other_write prev_elect_ts prev_primary_read prev_leader_read prev_leader_write prev_other_write <<< "${elect_line}"
+			if [[ "${host_stable}" == "STABLE" &&
+				"${elect_status}" == "OK" &&
+				"${last_primary_read}" == "${prev_primary_read}" &&
+				"${last_leader_read}" == "${prev_leader_read}" &&
+				"${last_leader_write}" == "${prev_leader_write}" &&
+				"${last_other_write}" == "${prev_other_write}" ]]; then
+				host_stable="STABLE"
+			else
+				host_stable="UNSTABLE"
+				all_hosts_stable=0
+			fi
+		fi
+
+		LAST_HOST_STATUS["${host}"]=${host_stable}
+		LAST_HOST_TEBIS_TS["${host}"]=${last_tebis_ts}
+		LAST_HOST_ELECT_TS["${host}"]=${last_elect_ts}
+		LAST_HOST_PRIMARY_DATA_WRITE_BYTES["${host}"]=${last_primary_write}
+		LAST_HOST_REPLICA_DATA_WRITE_BYTES["${host}"]=${last_replica_write}
+		LAST_HOST_PRIMARY_READ_BYTES["${host}"]=${last_primary_read}
+		LAST_HOST_LEADER_PARITY_READ_BYTES["${host}"]=${last_leader_read}
+		LAST_HOST_LEADER_PARITY_WRITE_BYTES["${host}"]=${last_leader_write}
+		LAST_HOST_OTHER_PARITY_WRITE_BYTES["${host}"]=${last_other_write}
+		LAST_HOST_PRIMARY_DATA_WRITE_GB["${host}"]=$(bytes_to_gb "${last_primary_write}")
+		LAST_HOST_REPLICA_DATA_WRITE_GB["${host}"]=$(bytes_to_gb "${last_replica_write}")
+		LAST_HOST_PRIMARY_READ_GB["${host}"]=$(bytes_to_gb "${last_primary_read}")
+		LAST_HOST_LEADER_PARITY_READ_GB["${host}"]=$(bytes_to_gb "${last_leader_read}")
+		LAST_HOST_LEADER_PARITY_WRITE_GB["${host}"]=$(bytes_to_gb "${last_leader_write}")
+		LAST_HOST_OTHER_PARITY_WRITE_GB["${host}"]=$(bytes_to_gb "${last_other_write}")
+
+		TEBIS_PRIMARY_DATA_WRITE_BYTES=$((TEBIS_PRIMARY_DATA_WRITE_BYTES + last_primary_write))
+		TEBIS_REPLICA_DATA_WRITE_BYTES=$((TEBIS_REPLICA_DATA_WRITE_BYTES + last_replica_write))
+		ELECT_PRIMARY_READ_BYTES=$((ELECT_PRIMARY_READ_BYTES + last_primary_read))
+		ELECT_LEADER_PARITY_READ_BYTES=$((ELECT_LEADER_PARITY_READ_BYTES + last_leader_read))
+		ELECT_LEADER_PARITY_WRITE_BYTES=$((ELECT_LEADER_PARITY_WRITE_BYTES + last_leader_write))
+		ELECT_OTHER_PARITY_WRITE_BYTES=$((ELECT_OTHER_PARITY_WRITE_BYTES + last_other_write))
 	done
 
-	ELECT_TOTAL_BYTES=$((ELECT_PRIMARY_TO_LEADER_BYTES + ELECT_LEADER_TO_OTHER_BYTES))
-	ELECT_EC_DATA_SIZE_BYTES=$(stripe_count_to_ec_data_bytes "${ELECT_CODED_STRIPE_SUM}")
-	ELECT_PRIMARY_TO_LEADER_GB=$(bytes_to_gb "${ELECT_PRIMARY_TO_LEADER_BYTES}")
-	ELECT_LEADER_TO_OTHER_GB=$(bytes_to_gb "${ELECT_LEADER_TO_OTHER_BYTES}")
-	ELECT_TOTAL_GB=$(bytes_to_gb "${ELECT_TOTAL_BYTES}")
-	ELECT_TOTAL_PRIMARY_GB=$(bytes_to_gb "${ELECT_TOTAL_PRIMARY_BYTES}")
-	ELECT_EC_DATA_SIZE_GB=$(bytes_to_gb "${ELECT_EC_DATA_SIZE_BYTES}")
+	TEBIS_PRIMARY_DATA_WRITE_GB=$(bytes_to_gb "${TEBIS_PRIMARY_DATA_WRITE_BYTES}")
+	TEBIS_REPLICA_DATA_WRITE_GB=$(bytes_to_gb "${TEBIS_REPLICA_DATA_WRITE_BYTES}")
+	ELECT_PRIMARY_READ_GB=$(bytes_to_gb "${ELECT_PRIMARY_READ_BYTES}")
+	ELECT_LEADER_PARITY_READ_GB=$(bytes_to_gb "${ELECT_LEADER_PARITY_READ_BYTES}")
+	ELECT_LEADER_PARITY_WRITE_GB=$(bytes_to_gb "${ELECT_LEADER_PARITY_WRITE_BYTES}")
+	ELECT_OTHER_PARITY_WRITE_GB=$(bytes_to_gb "${ELECT_OTHER_PARITY_WRITE_BYTES}")
 
 	if [[ ${all_hosts_stable} -eq 1 ]]; then
-		ELECT_OVERHEAD_STATUS="STABLE"
+		OVERHEAD_STATUS="STABLE"
 	else
-		ELECT_OVERHEAD_STATUS="UNSTABLE"
+		OVERHEAD_STATUS="UNSTABLE"
 	fi
 }
 
-wait_until_stable_elect_overhead() {
+wait_until_stable_disk_overhead() {
 	local remote_log=$1
+	local backup_label=$2
 	local start_ts
 	local now_ts
 	local elapsed_sec
@@ -361,20 +521,20 @@ wait_until_stable_elect_overhead() {
 
 	while true; do
 		attempt=$((attempt + 1))
-		if collect_last_two_elect_overhead "${remote_log}" 0; then
-			if [[ "${ELECT_OVERHEAD_STATUS}" == "STABLE" ]]; then
+		if collect_last_two_disk_overhead "${remote_log}" "${backup_label}" 0; then
+			if [[ "${OVERHEAD_STATUS}" == "STABLE" ]]; then
 				return 0
 			fi
-			echo "ELECT overhead still changing (attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
+			echo "Disk overhead still changing (backup=${backup_label}, attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
 		else
-			echo "ELECT overhead not ready yet (attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
+			echo "Disk overhead not ready yet (backup=${backup_label}, attempt=${attempt}), wait ${stable_check_interval_sec}s..." >&2
 		fi
 
 		now_ts=$(date +%s)
 		elapsed_sec=$((now_ts - start_ts))
 		if [[ ${stable_check_timeout_sec} -gt 0 && ${elapsed_sec} -ge ${stable_check_timeout_sec} ]]; then
-			echo "Timed out waiting ELECT overhead to become stable after ${elapsed_sec}s." >&2
-			collect_last_two_elect_overhead "${remote_log}" 1 || true
+			echo "Timed out waiting disk overhead to become stable after ${elapsed_sec}s." >&2
+			collect_last_two_disk_overhead "${remote_log}" "${backup_label}" 1 || true
 			return 1
 		fi
 
@@ -382,111 +542,153 @@ wait_until_stable_elect_overhead() {
 	done
 }
 
-snapshot_final_for_workload() {
-	local workload=$1
+snapshot_final_for_run() {
+	local backup_label=$1
+	local workload=$2
 	local host
 	local key
+	local run_key
 
-	for host in "${elect_hosts[@]}"; do
-		key="${workload}|${host}"
+	for host in "${cluster_hosts[@]}"; do
+		key="${backup_label}|${workload}|${host}"
 		FINAL_HOST_STATUS["${key}"]=${LAST_HOST_STATUS["${host}"]}
-		FINAL_HOST_TS["${key}"]=${LAST_HOST_TS["${host}"]}
-		FINAL_HOST_P2L_BYTES["${key}"]=${LAST_HOST_P2L_BYTES["${host}"]}
-		FINAL_HOST_L2O_BYTES["${key}"]=${LAST_HOST_L2O_BYTES["${host}"]}
-		FINAL_HOST_TOTAL_BYTES["${key}"]=${LAST_HOST_TOTAL_BYTES["${host}"]}
-		FINAL_HOST_P2L_GB["${key}"]=${LAST_HOST_P2L_GB["${host}"]}
-		FINAL_HOST_L2O_GB["${key}"]=${LAST_HOST_L2O_GB["${host}"]}
-		FINAL_HOST_TOTAL_GB["${key}"]=${LAST_HOST_TOTAL_GB["${host}"]}
-		FINAL_HOST_CODED_STRIPE["${key}"]=${LAST_HOST_CODED_STRIPE["${host}"]}
-		FINAL_HOST_TOTAL_PRIMARY_BYTES["${key}"]=${LAST_HOST_TOTAL_PRIMARY_BYTES["${host}"]}
-		FINAL_HOST_TOTAL_PRIMARY_GB["${key}"]=${LAST_HOST_TOTAL_PRIMARY_GB["${host}"]}
-		FINAL_HOST_EC_DATA_SIZE_BYTES["${key}"]=${LAST_HOST_EC_DATA_SIZE_BYTES["${host}"]}
-		FINAL_HOST_EC_DATA_SIZE_GB["${key}"]=${LAST_HOST_EC_DATA_SIZE_GB["${host}"]}
+		FINAL_HOST_TEBIS_TS["${key}"]=${LAST_HOST_TEBIS_TS["${host}"]}
+		FINAL_HOST_ELECT_TS["${key}"]=${LAST_HOST_ELECT_TS["${host}"]}
+		FINAL_HOST_PRIMARY_DATA_WRITE_BYTES["${key}"]=${LAST_HOST_PRIMARY_DATA_WRITE_BYTES["${host}"]}
+		FINAL_HOST_REPLICA_DATA_WRITE_BYTES["${key}"]=${LAST_HOST_REPLICA_DATA_WRITE_BYTES["${host}"]}
+		FINAL_HOST_PRIMARY_READ_BYTES["${key}"]=${LAST_HOST_PRIMARY_READ_BYTES["${host}"]}
+		FINAL_HOST_LEADER_PARITY_READ_BYTES["${key}"]=${LAST_HOST_LEADER_PARITY_READ_BYTES["${host}"]}
+		FINAL_HOST_LEADER_PARITY_WRITE_BYTES["${key}"]=${LAST_HOST_LEADER_PARITY_WRITE_BYTES["${host}"]}
+		FINAL_HOST_OTHER_PARITY_WRITE_BYTES["${key}"]=${LAST_HOST_OTHER_PARITY_WRITE_BYTES["${host}"]}
+		FINAL_HOST_PRIMARY_DATA_WRITE_GB["${key}"]=${LAST_HOST_PRIMARY_DATA_WRITE_GB["${host}"]}
+		FINAL_HOST_REPLICA_DATA_WRITE_GB["${key}"]=${LAST_HOST_REPLICA_DATA_WRITE_GB["${host}"]}
+		FINAL_HOST_PRIMARY_READ_GB["${key}"]=${LAST_HOST_PRIMARY_READ_GB["${host}"]}
+		FINAL_HOST_LEADER_PARITY_READ_GB["${key}"]=${LAST_HOST_LEADER_PARITY_READ_GB["${host}"]}
+		FINAL_HOST_LEADER_PARITY_WRITE_GB["${key}"]=${LAST_HOST_LEADER_PARITY_WRITE_GB["${host}"]}
+		FINAL_HOST_OTHER_PARITY_WRITE_GB["${key}"]=${LAST_HOST_OTHER_PARITY_WRITE_GB["${host}"]}
 	done
 
-	FINAL_WORKLOAD_STATUS["${workload}"]=${ELECT_OVERHEAD_STATUS}
-	FINAL_WORKLOAD_P2L_BYTES["${workload}"]=${ELECT_PRIMARY_TO_LEADER_BYTES}
-	FINAL_WORKLOAD_L2O_BYTES["${workload}"]=${ELECT_LEADER_TO_OTHER_BYTES}
-	FINAL_WORKLOAD_TOTAL_BYTES["${workload}"]=${ELECT_TOTAL_BYTES}
-	FINAL_WORKLOAD_P2L_GB["${workload}"]=${ELECT_PRIMARY_TO_LEADER_GB}
-	FINAL_WORKLOAD_L2O_GB["${workload}"]=${ELECT_LEADER_TO_OTHER_GB}
-	FINAL_WORKLOAD_TOTAL_GB["${workload}"]=${ELECT_TOTAL_GB}
-	FINAL_WORKLOAD_CODED_STRIPE_SUM["${workload}"]=${ELECT_CODED_STRIPE_SUM}
-	FINAL_WORKLOAD_TOTAL_PRIMARY_BYTES["${workload}"]=${ELECT_TOTAL_PRIMARY_BYTES}
-	FINAL_WORKLOAD_TOTAL_PRIMARY_GB["${workload}"]=${ELECT_TOTAL_PRIMARY_GB}
-	FINAL_WORKLOAD_EC_DATA_SIZE_BYTES["${workload}"]=${ELECT_EC_DATA_SIZE_BYTES}
-	FINAL_WORKLOAD_EC_DATA_SIZE_GB["${workload}"]=${ELECT_EC_DATA_SIZE_GB}
+	run_key="${backup_label}|${workload}"
+	FINAL_RUN_STATUS["${run_key}"]=${OVERHEAD_STATUS}
+	FINAL_RUN_PRIMARY_DATA_WRITE_BYTES["${run_key}"]=${TEBIS_PRIMARY_DATA_WRITE_BYTES}
+	FINAL_RUN_REPLICA_DATA_WRITE_BYTES["${run_key}"]=${TEBIS_REPLICA_DATA_WRITE_BYTES}
+	FINAL_RUN_PRIMARY_READ_BYTES["${run_key}"]=${ELECT_PRIMARY_READ_BYTES}
+	FINAL_RUN_LEADER_PARITY_READ_BYTES["${run_key}"]=${ELECT_LEADER_PARITY_READ_BYTES}
+	FINAL_RUN_LEADER_PARITY_WRITE_BYTES["${run_key}"]=${ELECT_LEADER_PARITY_WRITE_BYTES}
+	FINAL_RUN_OTHER_PARITY_WRITE_BYTES["${run_key}"]=${ELECT_OTHER_PARITY_WRITE_BYTES}
+	FINAL_RUN_PRIMARY_DATA_WRITE_GB["${run_key}"]=${TEBIS_PRIMARY_DATA_WRITE_GB}
+	FINAL_RUN_REPLICA_DATA_WRITE_GB["${run_key}"]=${TEBIS_REPLICA_DATA_WRITE_GB}
+	FINAL_RUN_PRIMARY_READ_GB["${run_key}"]=${ELECT_PRIMARY_READ_GB}
+	FINAL_RUN_LEADER_PARITY_READ_GB["${run_key}"]=${ELECT_LEADER_PARITY_READ_GB}
+	FINAL_RUN_LEADER_PARITY_WRITE_GB["${run_key}"]=${ELECT_LEADER_PARITY_WRITE_GB}
+	FINAL_RUN_OTHER_PARITY_WRITE_GB["${run_key}"]=${ELECT_OTHER_PARITY_WRITE_GB}
 }
 
 write_final_report() {
 	local output_file=$1
+	local backup_label
 	local workload
 	local host
 	local key
+	local run_key
 
-	printf "workload\thost\tstatus\tlast_timestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\ttotal_primary_gb\tec_data_size_gb\n" > "${output_file}"
+	printf "backup_label\tworkload\thost\tstatus\ttebis_timestamp\telect_timestamp\tprimary_data_write_bytes\treplica_data_write_bytes\tprimary_read_bytes\tleader_parity_read_bytes\tleader_parity_write_bytes\tother_parity_write_bytes\tprimary_data_write_gb\treplica_data_write_gb\tprimary_read_gb\tleader_parity_read_gb\tleader_parity_write_gb\tother_parity_write_gb\n" > "${output_file}"
 
+	for backup_label in "${backup_methods[@]}"; do
 		for workload in "${workloads[@]}"; do
-			for host in "${elect_hosts[@]}"; do
-				key="${workload}|${host}"
-				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-					"${workload}" "${host}" "${FINAL_HOST_STATUS[${key}]}" "${FINAL_HOST_TS[${key}]}" \
-					"${FINAL_HOST_P2L_GB[${key}]}" "${FINAL_HOST_L2O_GB[${key}]}" "${FINAL_HOST_TOTAL_GB[${key}]}" \
-					"${FINAL_HOST_TOTAL_PRIMARY_GB[${key}]}" "${FINAL_HOST_EC_DATA_SIZE_GB[${key}]}" \
+			for host in "${cluster_hosts[@]}"; do
+				key="${backup_label}|${workload}|${host}"
+				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+					"${backup_label}" "${workload}" "${host}" "${FINAL_HOST_STATUS[${key}]}" \
+					"${FINAL_HOST_TEBIS_TS[${key}]}" "${FINAL_HOST_ELECT_TS[${key}]}" \
+					"${FINAL_HOST_PRIMARY_DATA_WRITE_BYTES[${key}]}" \
+					"${FINAL_HOST_REPLICA_DATA_WRITE_BYTES[${key}]}" \
+					"${FINAL_HOST_PRIMARY_READ_BYTES[${key}]}" \
+					"${FINAL_HOST_LEADER_PARITY_READ_BYTES[${key}]}" \
+					"${FINAL_HOST_LEADER_PARITY_WRITE_BYTES[${key}]}" \
+					"${FINAL_HOST_OTHER_PARITY_WRITE_BYTES[${key}]}" \
+					"${FINAL_HOST_PRIMARY_DATA_WRITE_GB[${key}]}" \
+					"${FINAL_HOST_REPLICA_DATA_WRITE_GB[${key}]}" \
+					"${FINAL_HOST_PRIMARY_READ_GB[${key}]}" \
+					"${FINAL_HOST_LEADER_PARITY_READ_GB[${key}]}" \
+					"${FINAL_HOST_LEADER_PARITY_WRITE_GB[${key}]}" \
+					"${FINAL_HOST_OTHER_PARITY_WRITE_GB[${key}]}" \
 					>> "${output_file}"
 			done
-	
-			printf "%s\tSUM\t%s\tPER_HOST_LAST\t%s\t%s\t%s\t%s\t%s\n" \
-				"${workload}" "${FINAL_WORKLOAD_STATUS[${workload}]}" \
-				"${FINAL_WORKLOAD_P2L_GB[${workload}]}" "${FINAL_WORKLOAD_L2O_GB[${workload}]}" "${FINAL_WORKLOAD_TOTAL_GB[${workload}]}" \
-				"${FINAL_WORKLOAD_TOTAL_PRIMARY_GB[${workload}]}" "${FINAL_WORKLOAD_EC_DATA_SIZE_GB[${workload}]}" \
+
+			run_key="${backup_label}|${workload}"
+			printf "%s\t%s\tSUM\t%s\tPER_HOST_LAST\tPER_HOST_LAST\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+				"${backup_label}" "${workload}" "${FINAL_RUN_STATUS[${run_key}]}" \
+				"${FINAL_RUN_PRIMARY_DATA_WRITE_BYTES[${run_key}]}" \
+				"${FINAL_RUN_REPLICA_DATA_WRITE_BYTES[${run_key}]}" \
+				"${FINAL_RUN_PRIMARY_READ_BYTES[${run_key}]}" \
+				"${FINAL_RUN_LEADER_PARITY_READ_BYTES[${run_key}]}" \
+				"${FINAL_RUN_LEADER_PARITY_WRITE_BYTES[${run_key}]}" \
+				"${FINAL_RUN_OTHER_PARITY_WRITE_BYTES[${run_key}]}" \
+				"${FINAL_RUN_PRIMARY_DATA_WRITE_GB[${run_key}]}" \
+				"${FINAL_RUN_REPLICA_DATA_WRITE_GB[${run_key}]}" \
+				"${FINAL_RUN_PRIMARY_READ_GB[${run_key}]}" \
+				"${FINAL_RUN_LEADER_PARITY_READ_GB[${run_key}]}" \
+				"${FINAL_RUN_LEADER_PARITY_WRITE_GB[${run_key}]}" \
+				"${FINAL_RUN_OTHER_PARITY_WRITE_GB[${run_key}]}" \
 				>> "${output_file}"
 		done
-	}
+	done
+}
 
-printf "workload\tstatus\ttimestamp\tprimary_to_leader_gb\tleader_to_other_gb\ttotal_gb\tcoded_stripe\ttotal_primary_gb\tec_data_size_gb\n" > "${summary_file}"
+printf "backup_label\tworkload\tstatus\ttimestamp\tprimary_data_write_bytes\treplica_data_write_bytes\tprimary_read_bytes\tleader_parity_read_bytes\tleader_parity_write_bytes\tother_parity_write_bytes\tprimary_data_write_gb\treplica_data_write_gb\tprimary_read_gb\tleader_parity_read_gb\tleader_parity_write_gb\tother_parity_write_gb\n" > "${summary_file}"
 
-echo "Running motivation exp1a with backup=${backup_label}, workloads=${workloads[*]}"
+echo "Running motivation exp1a with backups=${backup_methods[*]}, workloads=${workloads[*]}"
 
-for workload in "${workloads[@]}"; do
-	echo -e "\n*********Running motivation exp1a workload=${workload}, backup=${backup_label}*********"
+for backup_label in "${backup_methods[@]}"; do
+	read -r backup_method regions_file <<< "$(resolve_backup_config "${backup_label}")"
+	current_backup_method="${backup_method}"
+	sync_and_build_for_backup "${backup_label}"
 
-	run_tag="${date_time}"
-	output_base="ycsb_log/tmp_log/${nickname}_${backup_label}_${workload}_thread_${server_threads}_${client_threads}"
-	output_path="${project_dir}/${output_base}_${run_tag}"
-	server_log_path="/tmp/lijinming_tebis_server_${backup_label}_${workload}_${run_tag}.log"
+	for workload in "${workloads[@]}"; do
+		echo -e "\n*********Running motivation exp1a workload=${workload}, backup=${backup_label}*********"
 
-	echo "Running single round: workload=${workload}, tag=${run_tag}" >&2
+		run_tag="${date_time}"
+		output_base="ycsb_log/tmp_log/${nickname}_${backup_label}_${workload}_thread_${server_threads}_${client_threads}"
+		output_path="${project_dir}/${output_base}_${run_tag}"
+		server_log_path="/tmp/lijinming_tebis_server_${backup_label}_${workload}_${run_tag}.log"
 
-	"${basic_script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
-		-r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
-		-d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" -k \
-		-s "${server_log_path}"
+		echo "Running single round: workload=${workload}, backup=${backup_label}, tag=${run_tag}" >&2
 
-	servers_may_be_running=1
+		"${basic_script_dir}/run_cluster.sh" -b "${backup_method}" -g "${gc_method}" -l "${load_times}" \
+			-r "${run_times}" -u "${ops_higher_threshold}" -w "${workload}" -o "${output_base}" \
+			-d "${run_tag}" -t "${server_threads}" -c "${client_threads}" -f "${regions_file}" -k \
+			-s "${server_log_path}"
 
-	ops_file="${output_path}/run_${workload}/ops.txt"
-	filter_ops_file "${ops_file}"
+		servers_may_be_running=1
 
-	wait_until_stable_elect_overhead "${server_log_path}"
-	stop_elect_servers
-	servers_may_be_running=0
+		ops_file="${output_path}/run_${workload}/ops.txt"
+		filter_ops_file "${ops_file}"
 
-		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-			"${workload}" "${ELECT_OVERHEAD_STATUS}" "${ELECT_OVERHEAD_TIMESTAMP}" \
-			"${ELECT_PRIMARY_TO_LEADER_GB}" "${ELECT_LEADER_TO_OTHER_GB}" "${ELECT_TOTAL_GB}" \
-			"${ELECT_CODED_STRIPE_SUM}" "${ELECT_TOTAL_PRIMARY_GB}" "${ELECT_EC_DATA_SIZE_GB}" \
+		wait_until_stable_disk_overhead "${server_log_path}" "${backup_label}"
+		stop_servers "${backup_method}"
+		servers_may_be_running=0
+
+		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+			"${backup_label}" "${workload}" "${OVERHEAD_STATUS}" "${OVERHEAD_TIMESTAMP}" \
+			"${TEBIS_PRIMARY_DATA_WRITE_BYTES}" "${TEBIS_REPLICA_DATA_WRITE_BYTES}" \
+			"${ELECT_PRIMARY_READ_BYTES}" "${ELECT_LEADER_PARITY_READ_BYTES}" \
+			"${ELECT_LEADER_PARITY_WRITE_BYTES}" "${ELECT_OTHER_PARITY_WRITE_BYTES}" \
+			"${TEBIS_PRIMARY_DATA_WRITE_GB}" "${TEBIS_REPLICA_DATA_WRITE_GB}" \
+			"${ELECT_PRIMARY_READ_GB}" "${ELECT_LEADER_PARITY_READ_GB}" \
+			"${ELECT_LEADER_PARITY_WRITE_GB}" "${ELECT_OTHER_PARITY_WRITE_GB}" \
 			>> "${summary_file}"
 
-	snapshot_final_for_workload "${workload}"
+		snapshot_final_for_run "${backup_label}" "${workload}"
 
-	sleep 10
+		sleep 10
+	done
 done
 
 write_final_report "${final_file}"
 
 echo ""
-echo "Final per-host and summed ELECT overhead:"
+echo "Final per-host and summed disk overhead:"
 cat "${final_file}"
 echo ""
 echo "Saved run summary: ${summary_file}"

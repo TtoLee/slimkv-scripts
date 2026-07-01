@@ -11,15 +11,16 @@ gc_method=none
 backup_methods=(
 	replication
 	elect
+	elect+
 )
 load_times=100000000
-run_times=700000000
+run_times=1000000000
 ops_lower_threshold=200000000
-ops_higher_threshold=500000000
+ops_higher_threshold=700000000
 workloads=(
 	load
 )
-server_threads=4
+server_threads=8
 client_threads=32
 date_time=$(date +%Y%m%d_%H%M%S)
 
@@ -70,6 +71,9 @@ resolve_backup_config() {
 	elect)
 		echo "elect regions_file_elect"
 		;;
+	elect+)
+		echo "elect regions_file_elect"
+		;;
 	replication)
 		# Keep the method label as requested; run_cluster still uses online_coding.
 		echo "online_coding regions_file_elect"
@@ -77,6 +81,30 @@ resolve_backup_config() {
 	*)
 		echo "Unsupported backup method label: ${backup_label}" >&2
 		exit 1
+		;;
+	esac
+}
+
+sync_and_build_all_nodes() {
+	local cmake_args=("$@")
+
+	echo "Syncing source and building locally/remotely via ./scp.sh ${cmake_args[*]} ..." >&2
+	(
+		cd "${project_dir}"
+		./scp.sh "${cmake_args[@]}"
+	)
+}
+
+sync_and_build_for_backup() {
+	local backup_label=$1
+
+	case "${backup_label}" in
+	elect)
+		sync_and_build_all_nodes -DELECT_MINIMIZE_NETWORK=OFF
+		;;
+	elect+)
+		# Use scp.sh defaults, currently including -DELECT_MINIMIZE_NETWORK=ON.
+		sync_and_build_all_nodes
 		;;
 	esac
 }
@@ -122,6 +150,7 @@ for workload in "${workloads[@]}"; do
 		echo -e "\n*********Running motivation exp1 workload=${workload}, backup=${backup_label}*********"
 
 		read -r backup_method regions_file <<< "$(resolve_backup_config "${backup_label}")"
+		sync_and_build_for_backup "${backup_label}"
 
 		run_tag="${date_time}"
 		output_base="${results_rel}/client_logs/${nickname}_${backup_label}_${workload}_thread_${server_threads}_${client_threads}"
@@ -163,23 +192,11 @@ fi
 
 plot_label1="${backup_methods[0]}"
 plot_label2="${backup_methods[1]}"
+plot_label3="${backup_methods[2]:-}"
 
 for workload in "${workloads[@]}"; do
-	first_key="${plot_label1}_${workload}"
-	second_key="${plot_label2}_${workload}"
-	dirs1_csv="${sample_run_dirs[${first_key}]:-}"
-	dirs2_csv="${sample_run_dirs[${second_key}]:-}"
-
-	if [[ -z "${dirs1_csv}" || -z "${dirs2_csv}" ]]; then
-		echo "Skip plotting workload=${workload}: missing run directories." >&2
-		continue
-	fi
-
-	IFS=';' read -r -a dirs1 <<< "${dirs1_csv}"
-	IFS=';' read -r -a dirs2 <<< "${dirs2_csv}"
-
-	plot_output="${results_dir}/run_${workload}_throughput_${plot_label1}_vs_${plot_label2}.pdf"
-	echo "Plotting throughput curve for workload=${workload} (${plot_label1} vs ${plot_label2})"
+	plot_output="${results_dir}/run_${workload}_throughput.pdf"
+	echo "Plotting throughput curve for workload=${workload} (${backup_methods[*]})"
 	plot_cmd=(
 		python3 "${basic_script_dir}/plot_ops_triple.py"
 		--label1 "${plot_label1}"
@@ -189,11 +206,26 @@ for workload in "${workloads[@]}"; do
 		--ops-higher-threshold "${ops_higher_threshold}"
 		--output "${plot_output}"
 	)
-	for d in "${dirs1[@]}"; do
-		plot_cmd+=(--dir1 "${d}")
-	done
-	for d in "${dirs2[@]}"; do
-		plot_cmd+=(--dir2 "${d}")
+	if [[ -n "${plot_label3}" ]]; then
+		plot_cmd+=(--label3 "${plot_label3}")
+	fi
+
+	for index in "${!backup_methods[@]}"; do
+		backup_label="${backup_methods[${index}]}"
+		sample_key="${backup_label}_${workload}"
+		dirs_csv="${sample_run_dirs[${sample_key}]:-}"
+
+		if [[ -z "${dirs_csv}" ]]; then
+			echo "Skip plotting workload=${workload}: missing run directory for backup=${backup_label}." >&2
+			continue 2
+		fi
+
+		series_num=$((index + 1))
+
+		IFS=';' read -r -a dirs <<< "${dirs_csv}"
+		for d in "${dirs[@]}"; do
+			plot_cmd+=("--dir${series_num}" "${d}")
+		done
 	done
 	echo "Executing plot command:"
 	printf '  %q' "${plot_cmd[@]}"
